@@ -1,0 +1,85 @@
+# Back (FastAPI). Solo dentro del clúster: el front le llega por el proxy de nginx en /api.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: back
+  namespace: iot
+spec:
+  replicas: 1 # ponytail: 1 réplica; con más, cada una recibiría y guardaría el mismo mensaje MQTT (usar shared subscription $share/...)
+  selector:
+    matchLabels:
+      app: back
+  template:
+    metadata:
+      labels:
+        app: back
+    spec:
+      containers:
+        - name: back
+          image: iotproyectojavierbr.azurecr.io/back:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: iot-secrets
+                  key: db-password
+            - name: DATABASE_URL
+              value: postgresql://iot:$(DB_PASSWORD)@database:5432/iot
+            - name: MQTT_HOST
+              value: broker
+            - name: MQTT_USER
+              value: iot
+            - name: MQTT_PUBLIC_WSS # cómo se conectan los dispositivos desde internet (se muestra en la web)
+              value: wss://iot.javier.life/mqtt
+            - name: MQTT_PUBLIC_TCP
+              value: 57.156.67.235:1883
+            - name: MQTT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: iot-secrets
+                  key: mqtt-password
+            - name: APP_USER
+              value: admin
+            - name: APP_PASSWORD # login del visualizador
+              valueFrom:
+                secretKeyRef:
+                  name: iot-secrets
+                  key: app-password
+            - name: SESSION_SECRET # firma de las cookies de sesión
+              valueFrom:
+                secretKeyRef:
+                  name: iot-secrets
+                  key: session-secret
+            - name: TELEGRAM_TOKEN # opcional: avisos de alertas (Secret "telegram", ver README)
+              valueFrom:
+                secretKeyRef:
+                  name: telegram
+                  key: token
+                  optional: true
+            - name: TELEGRAM_CHAT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: telegram
+                  key: chat-id
+                  optional: true
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: back
+  namespace: iot
+spec:
+  selector:
+    app: back
+  ports:
+    - port: 8000

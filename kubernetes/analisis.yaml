@@ -1,0 +1,41 @@
+# Analysis (FastAPI + numpy): anomalías y pronóstico. Solo dentro del clúster;
+# el front le llega por nginx en /api/analysis, que antes valida la sesión contra el back.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analysis
+  namespace: iot
+spec:
+  replicas: 1 # sin estado: se puede escalar sin cambios
+  selector:
+    matchLabels:
+      app: analysis
+  template:
+    metadata:
+      labels:
+        app: analysis
+    spec:
+      containers:
+        - name: analysis
+          image: iotproyectojavierbr.azurecr.io/analysis:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /api/analysis/health
+              port: 8000
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 384Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analysis
+  namespace: iot
+spec:
+  selector:
+    app: analysis
+  ports:
+    - port: 8000

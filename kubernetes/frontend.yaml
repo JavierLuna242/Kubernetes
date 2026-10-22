@@ -1,0 +1,43 @@
+# Front (React servido por nginx). IP pública en el puerto 80; nginx pasa /api al back.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: front
+  namespace: iot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: front
+  template:
+    metadata:
+      labels:
+        app: front
+    spec:
+      containers:
+        - name: front
+          image: iotproyectojavierbr.azurecr.io/front:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: front
+  namespace: iot
+  annotations:
+    service.beta.kubernetes.io/azure-pip-name: iot-ip # IP compartida (ver README)
+spec:
+  type: LoadBalancer
+  selector:
+    app: front
+  ports:
+    - port: 80

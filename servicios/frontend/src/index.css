@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Colores semánticos: las clases bg-surface, text-muted, border-border... salen de estas variables. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+}
+
+:root {
+  --bg: #f4f5f8;
+  --surface: #ffffff;
+  --surface-2: #eef0f4;
+  --border: #dde1e8;
+  --fg: #1d232c;
+  --muted: #687384;
+  --accent: #3d71d9;
+  --accent-fg: #ffffff;
+  --danger: #d83a4d;
+  --ok: #2f9e54;
+  --grid: #e9ecf1;
+  --axis: #8a94a3;
+  color-scheme: light;
+}
+
+:root.dark {
+  --bg: #0b0d12;
+  --surface: #12151c;
+  --surface-2: #1a1e27;
+  --border: #252a35;
+  --fg: #e2e5ea;
+  --muted: #8a92a0;
+  --accent: #5b8def;
+  --accent-fg: #0b0d12;
+  --danger: #f2495c;
+  --ok: #73bf69;
+  --grid: #1e232d;
+  --axis: #737c8c;
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-bg text-fg antialiased;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* react-grid-layout con los colores del tema */
+.react-grid-item.react-grid-placeholder {
+  background: var(--accent);
+  opacity: 0.15;
+  border-radius: 8px;
+}
+.react-grid-item > .react-resizable-handle::after {
+  border-color: var(--muted);
+}
+
+/* Mapa: teselas oscuras en tema oscuro y controles con los colores del tema */
+.dark .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9);
+}
+.leaflet-container {
+  background: var(--surface-2);
+  font: inherit;
+}
+.leaflet-tooltip {
+  background: var(--surface);
+  color: var(--fg);
+  border-color: var(--border);
+  font-size: 12px;
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 0.55);
+  backdrop-filter: blur(2px);
+}

@@ -1,0 +1,38 @@
+# Cloudflare Tunnel: conecta el clúster a Cloudflare desde adentro (sin abrir puertos) y publica
+# la web y el MQTT por WebSocket con HTTPS en el dominio. Las rutas (subdominio -> Service) se
+# configuran en el panel de Cloudflare: Zero Trust -> Networks -> Tunnels -> Public hostnames.
+# El token vive en el Secret "cloudflare-tunnel" (se crea con kubectl, ver README).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: iot
+spec:
+  replicas: 2 # dos conectores: si se reinicia un nodo, el sitio sigue en línea
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.10.3
+          args: [tunnel, --no-autoupdate, --metrics, 0.0.0.0:2000, run]
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflare-tunnel
+                  key: token
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            failureThreshold: 3
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { memory: 128Mi }

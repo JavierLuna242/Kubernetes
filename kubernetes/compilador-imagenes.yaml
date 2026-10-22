@@ -1,0 +1,34 @@
+# BuildKit dentro del clúster: compila las imágenes (Azure for Students no permite ACR Tasks).
+# Lo usa desplegar.ps1; no hace falta Docker en el PC.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: buildkitd
+  namespace: iot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: buildkitd
+  template:
+    metadata:
+      labels:
+        app: buildkitd
+    spec:
+      containers:
+        - name: buildkitd
+          image: moby/buildkit:v0.34.1
+          securityContext:
+            privileged: true
+          readinessProbe:
+            exec:
+              command: [buildctl, debug, workers]
+          volumeMounts:
+            - name: cache
+              mountPath: /var/lib/buildkit
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 2Gi }
+      volumes:
+        - name: cache
+          emptyDir: {}

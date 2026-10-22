@@ -1,0 +1,64 @@
+# TimescaleDB (PostgreSQL + series de tiempo). Solo accesible dentro del clúster.
+# El esquema (tabla readings) lo crea el back al arrancar.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: database
+  namespace: iot
+spec:
+  serviceName: database
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database
+  template:
+    metadata:
+      labels:
+        app: database
+    spec:
+      containers:
+        - name: timescaledb
+          image: timescale/timescaledb:2.17.2-pg17
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: iot
+            - name: POSTGRES_USER
+              value: iot
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: iot-secrets
+                  key: db-password
+            - name: PGDATA # subcarpeta: el disco de Azure trae lost+found en la raíz
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, iot, -d, iot]
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1Gi }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: managed-csi
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: database
+  namespace: iot
+spec:
+  selector:
+    app: database
+  ports:
+    - port: 5432

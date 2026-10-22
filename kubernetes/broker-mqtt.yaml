@@ -1,0 +1,77 @@
+# EMQX: broker MQTT. IP pública en 1883 para los dispositivos; exige usuario/contraseña.
+# Los usuarios salen de la key mqtt-users.csv del Secret iot-secrets.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broker
+  namespace: iot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: broker
+  template:
+    metadata:
+      labels:
+        app: broker
+    spec:
+      containers:
+        - name: emqx
+          image: emqx/emqx:5.8.6
+          ports:
+            - containerPort: 1883 # mqtt
+            - containerPort: 8083 # mqtt sobre WebSocket (lo publica el túnel de Cloudflare con HTTPS)
+            - containerPort: 18083 # dashboard (solo dentro del clúster)
+          env:
+            - name: EMQX_AUTHENTICATION
+              value: '[{mechanism = password_based, backend = built_in_database, user_id_type = username, bootstrap_file = "/etc/iot/mqtt-users.csv", bootstrap_type = plain}]'
+            - name: EMQX_DASHBOARD__DEFAULT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: iot-secrets
+                  key: mqtt-password
+          volumeMounts:
+            - name: users
+              mountPath: /etc/iot
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: 1883
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1Gi }
+      volumes:
+        - name: users
+          secret:
+            secretName: iot-secrets
+            items:
+              - key: mqtt-users.csv
+                path: mqtt-users.csv
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker
+  namespace: iot
+  annotations:
+    service.beta.kubernetes.io/azure-pip-name: iot-ip # IP compartida (ver README)
+spec:
+  type: LoadBalancer
+  selector:
+    app: broker
+  ports:
+    - name: mqtt
+      port: 1883
+---
+# MQTT sobre WebSocket, solo dentro del clúster: el túnel de Cloudflare lo publica como wss://mqtt.<dominio>/mqtt
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker-ws
+  namespace: iot
+spec:
+  selector:
+    app: broker
+  ports:
+    - name: ws
+      port: 8083
