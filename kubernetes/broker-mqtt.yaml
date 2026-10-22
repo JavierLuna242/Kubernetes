@@ -1,5 +1,26 @@
-# EMQX: broker MQTT. IP pública en 1883 para los dispositivos; exige usuario/contraseña.
-# Los usuarios salen de la key mqtt-users.csv del Secret iot-secrets.
+# EMQX: broker MQTT. IP pública en 1883 (sin cifrar) y MQTT sobre WebSocket en 8083 (cifrado vía Cloudflare
+# en wss://iot.javier.life/mqtt).
+#
+# Autenticación, en cadena:
+#   1. Usuario "iot" (base interna de EMQX, desde mqtt-users.csv del Secret iot-secrets): lo usa el backend.
+#   2. Dispositivos: usuario = id del dispositivo, contraseña = su token. EMQX le pregunta al backend
+#      (/internal/mqtt/auth), que lo compara con el registro de dispositivos.
+# Autorización (ACL de abajo): cada dispositivo solo publica en iot/<su id>/telemetry y solo lee iot/<su id>/cmd.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: broker-acl
+  namespace: iot
+data:
+  acl.conf: |
+    %% Backend: todos los tópicos.
+    {allow, {username, "iot"}, all, ["#"]}.
+    %% Cada dispositivo: solo su telemetría y sus comandos (${username} = id del dispositivo).
+    {allow, all, publish, ["iot/${username}/telemetry"]}.
+    {allow, all, subscribe, ["iot/${username}/cmd"]}.
+    %% Todo lo demás, negado.
+    {deny, all}.
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -20,11 +41,23 @@ spec:
           image: emqx/emqx:5.8.6
           ports:
             - containerPort: 1883 # mqtt
-            - containerPort: 8083 # mqtt sobre WebSocket (lo publica el túnel de Cloudflare con HTTPS)
-            - containerPort: 18083 # dashboard (solo dentro del clúster)
+            - containerPort: 8083 # mqtt sobre websocket (/mqtt)
+            - containerPort: 18083 # dashboard y API (solo dentro del clúster)
           env:
             - name: EMQX_AUTHENTICATION
-              value: '[{mechanism = password_based, backend = built_in_database, user_id_type = username, bootstrap_file = "/etc/iot/mqtt-users.csv", bootstrap_type = plain}]'
+              value: >-
+                [{mechanism = password_based, backend = built_in_database, user_id_type = username,
+                  bootstrap_file = "/etc/iot/mqtt-users.csv", bootstrap_type = plain},
+                 {mechanism = password_based, backend = http, method = post,
+                  url = "http://back:8000/internal/mqtt/auth",
+                  headers = {"content-type" = "application/json"},
+                  body = {username = "${username}", password = "${password}"}}]
+            - name: EMQX_AUTHORIZATION__NO_MATCH
+              value: deny
+            - name: EMQX_AUTHORIZATION__SOURCES
+              value: '[{type = file, enable = true, path = "/etc/iot-acl/acl.conf"}]'
+            - name: EMQX_API_KEY__BOOTSTRAP_FILE # clave con la que el backend consulta las conexiones
+              value: /etc/iot/emqx-api-key
             - name: EMQX_DASHBOARD__DEFAULT_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -33,6 +66,9 @@ spec:
           volumeMounts:
             - name: users
               mountPath: /etc/iot
+              readOnly: true
+            - name: acl
+              mountPath: /etc/iot-acl
               readOnly: true
           readinessProbe:
             tcpSocket:
@@ -47,6 +83,11 @@ spec:
             items:
               - key: mqtt-users.csv
                 path: mqtt-users.csv
+              - key: emqx-api-key
+                path: emqx-api-key
+        - name: acl
+          configMap:
+            name: broker-acl
 ---
 apiVersion: v1
 kind: Service
@@ -63,7 +104,7 @@ spec:
     - name: mqtt
       port: 1883
 ---
-# MQTT sobre WebSocket, solo dentro del clúster: el túnel de Cloudflare lo publica como wss://mqtt.<dominio>/mqtt
+# Solo dentro del clúster: MQTT sobre WebSocket (nginx lo publica en /mqtt) y la API del broker (la usa el backend).
 apiVersion: v1
 kind: Service
 metadata:
@@ -75,3 +116,5 @@ spec:
   ports:
     - name: ws
       port: 8083
+    - name: api
+      port: 18083

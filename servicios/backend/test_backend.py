@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 os.environ.setdefault("SESSION_SECRET", "test")
 
-from main import check_token, condition, make_token, next_state, parse, pick_source, REPORT_TZ, TELEGRAM_MAX, build_report, report_due  # noqa: E402
+from main import check_token, condition, make_token, next_state, parse, pick_source, REPORT_TZ, TELEGRAM_MAX, build_report, report_due, DEVICE_ID, RESERVED_IDS, hash_token, new_token, token_ok, twin_diff  # noqa: E402
+import re  # noqa: E402
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 at = lambda s: T0 + timedelta(seconds=s)  # noqa: E731
@@ -97,3 +98,23 @@ def test_reporte_cuando():
     assert not report_due(s, at(21, 6))  # aún no es la hora
     assert report_due(s, at(21, 7))
     assert not report_due({**s, "enabled": False}, at(21, 9))
+
+
+def test_credenciales_dispositivo():
+    t = new_token()
+    assert len(t) >= 24 and new_token() != t
+    h = hash_token(t)
+    assert t not in h  # nunca se guarda el token
+    assert token_ok(h, t) and not token_ok(h, t + "x") and not token_ok(None, t) and not token_ok(h, "")
+    for ok in ("sensor-1", "nodo_02", "ab"):
+        assert re.fullmatch(DEVICE_ID, ok), ok
+    for bad in ("a", "Sensor", "con espacio", "a/b", "+", "#", "-x", "x" * 64):
+        assert not re.fullmatch(DEVICE_ID, bad), bad
+    assert "iot" in RESERVED_IDS
+
+
+def test_gemelo_digital():
+    assert twin_diff({"encendido": 1, "velocidad": 42}, {"encendido": 1.0, "velocidad": 10, "temperatura": 22}) == {
+        "encendido": "sincronizado", "velocidad": "pendiente"}
+    assert twin_diff({"encendido": 0}, {}) == {"encendido": "pendiente"}
+    assert twin_diff({}, {"temperatura": 1}) == {}

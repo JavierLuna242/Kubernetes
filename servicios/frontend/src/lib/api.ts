@@ -59,7 +59,30 @@ export type Variable = { name: string; type: "device" | "metric" | "custom"; val
 export type DashboardSpec = { panels: Panel[]; time: TimeRange; refresh: Refresh; variables?: Variable[] };
 export type Dashboard = { id: string; name: string; spec: DashboardSpec; updated_at: string };
 export type DashboardSummary = { id: string; name: string; updated_at: string; panels: number };
-export type Device = { device: string; metrics: string[]; last_seen: string; readings: number };
+/** Ficha editable de un dispositivo registrado. */
+export type DeviceInfo = { name: string; type: string; location: string; tags: string[] };
+/**
+ * Dispositivo (registrado o solo con datos). Gemelo digital: `desired` = estado pedido por la plataforma,
+ * `reported` = último valor de cada métrica; `twin` dice si cada propiedad deseada ya está sincronizada.
+ */
+export type Device = Partial<DeviceInfo> & {
+  device: string;
+  metrics: string[];
+  last_seen: string | null;
+  readings: number;
+  registered: boolean;
+  desired: Record<string, number> | null;
+  reported: Record<string, number> | null;
+  reported_at: string | null;
+  connected: boolean | null;
+  connected_at: string | null;
+  created_at: string | null;
+  twin: Record<string, "sincronizado" | "pendiente">;
+};
+/** Credencial MQTT de un dispositivo: el token solo se ve al registrarlo o regenerarlo. */
+export type DeviceCredentials = { id: string; username: string; token: string };
+/** Acción de una regla: enviar un comando a un dispositivo. */
+export type RuleAction = { type: "command"; device: string; name: string; value: number };
 export type Reading = { time: string; device: string; metric: string; value: number };
 export type SeriesResult = { device: string; metric: string; agg: Agg; points: [string, number | null][] };
 
@@ -75,6 +98,10 @@ export type AlertRuleInput = {
   threshold: number;
   for_s: number;
   enabled: boolean;
+  /** Motor de reglas: avisar por Telegram y/o ejecutar acciones al dispararse y al resolverse. */
+  notify: boolean;
+  on_fire: RuleAction[];
+  on_resolve: RuleAction[];
 };
 export type AlertRule = AlertRuleInput & {
   id: string;
@@ -92,6 +119,7 @@ export type AlertEvent = {
   state: "firing" | "resolved";
   value: number | null;
   op: AlertOp;
+  actions: string; // acciones ejecutadas por la regla, separadas por "; "
 };
 
 export type AnnotationInput = { dashboard_id: string | null; time: string; time_end: string | null; text: string; color: string };
@@ -139,8 +167,14 @@ export const api = {
   config: () => req<{ mqtt_tcp: string; mqtt_wss: string }>("GET", "/api/config"),
   devices: () => req<Device[]>("GET", "/api/devices"),
   deleteDevice: (device: string) => req<{ deleted: number }>("DELETE", `/api/devices/${encodeURIComponent(device)}`),
-  command: (device: string, name: string, value: number) =>
-    req<{ topic: string; payload: string }>("POST", `/api/devices/${encodeURIComponent(device)}/command`, { name, value }),
+  registerDevice: (d: DeviceInfo & { id: string }) => req<DeviceCredentials>("POST", "/api/devices", d),
+  updateDevice: (id: string, d: DeviceInfo) => req("PUT", `/api/devices/${encodeURIComponent(id)}`, d),
+  rotateToken: (id: string) => req<DeviceCredentials>("POST", `/api/devices/${encodeURIComponent(id)}/token`),
+  clearDesired: (id: string, name: string) =>
+    req("DELETE", `/api/devices/${encodeURIComponent(id)}/desired/${encodeURIComponent(name)}`),
+  /** momentary: acción puntual (botón), no queda en el estado deseado del gemelo. */
+  command: (device: string, name: string, value: number, momentary = false) =>
+    req<{ topic: string; payload: string }>("POST", `/api/devices/${encodeURIComponent(device)}/command`, { name, value, momentary }),
 
   /** bucketS: intervalo exacto en segundos (ej. 3600 = por hora); si no, ~points intervalos. */
   query: (start: Date, end: Date, points: number, targets: Pick<Target, "device" | "metric" | "agg">[], bucketS?: number) =>

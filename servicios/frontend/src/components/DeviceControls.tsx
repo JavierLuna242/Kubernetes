@@ -38,7 +38,7 @@ function ControlRow({ target: t, current, c, o }: { target: Target; current: num
 
   async function send(value: number, confirm = true) {
     try {
-      await api.command(t.device, command, value);
+      await api.command(t.device, command, value, !confirm);
       if (!confirm) return toast(`Enviado ${command} = ${value} a ${t.device}`);
       setWaiting(value);
       clearTimeout(timer.current);

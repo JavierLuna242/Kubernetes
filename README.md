@@ -47,8 +47,8 @@ Nombres dentro de Kubernetes (Deployments, Services e imágenes): `back`, `front
 | Qué | Dirección | Usuario |
 |---|---|---|
 | Visualizador | **https://iot.javier.life** (o http://57.156.67.235, sin cifrar) | `admin` |
-| MQTT cifrado (recomendado) | `wss://iot.javier.life/mqtt` (WebSocket + TLS, puerto 443) | `iot` |
-| MQTT sin cifrar | `57.156.67.235:1883` | `iot` |
+| MQTT cifrado (recomendado) | `wss://iot.javier.life/mqtt` (WebSocket + TLS, puerto 443) | el id de cada dispositivo |
+| MQTT sin cifrar | `57.156.67.235:1883` | el id de cada dispositivo |
 
 El dominio entra por un **Cloudflare Tunnel** (`kubernetes/tunel-cloudflare.yaml`, 2 conectores): `cloudflared` se conecta desde el clúster hacia Cloudflare, que pone el HTTPS con certificado automático y protege contra ataques. No hay puertos abiertos para el dominio. Las rutas están en el panel de Cloudflare (*Zero Trust → Networks → Tunnels → Kubernetes → Published applications*):
 
@@ -65,8 +65,10 @@ Contraseñas (están en Secrets del clúster, no en el código):
 ```powershell
 function Get-Secret($s, $k) { kubectl -n iot get secret $s -o jsonpath="{.data.$k}" | % { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_)) } }
 Get-Secret iot-secrets app-password      # visualizador
-Get-Secret iot-secrets mqtt-password     # MQTT
+Get-Secret iot-secrets mqtt-password     # usuario MQTT "iot": solo lo usa el backend, no lo des a dispositivos
 ```
+
+Cada dispositivo tiene su propio token (ver *Dispositivos* abajo); se obtiene al registrarlo y no se guarda en claro.
 
 ## Visualizador
 
@@ -83,7 +85,7 @@ Get-Secret iot-secrets mqtt-password     # MQTT
 - **Rotación en kiosco** (*Dashboards → Rotar en kiosco*): elige dashboards, orden e intervalo (15 s – 5 min); pantalla completa que cambia sola. `←` / `→` para cambiar, espacio para pausar, `Esc` para salir. Dirección para dejarla fija en una pantalla: `#/kiosk/<segundos>/<id1,id2,…>`.
 - **Métricas calculadas** (editor de panel → *Agregar fórmula*): fórmulas sobre las consultas del panel, que se identifican con letras (A, B, C…). Ejemplos: `A * B` (potencia = voltaje × corriente), `sensacion_termica(A, B)` (índice de calor de la NOAA, °C), `punto_rocio(A, B)`, `A * 9 / 5 + 32`. Operadores `+ - * / ^ %`, funciones `sqrt abs round floor ceil exp log log10 pow min max`; decimales con punto. Se calculan al consultar, así que funcionan también con el historial. El ojo de cada consulta la oculta del gráfico (por ejemplo, voltaje y corriente si solo quieres ver la potencia). No aplican a los paneles de mapa ni de control.
 - **Anotaciones**: Ctrl + clic sobre una serie de tiempo (o menú ⋮ → *Agregar anotación*). Un instante o un período, de un dashboard o de todos. Clic sobre el marcador para editarla. Los eventos de alertas aparecen solos (rojo = disparada, verde = resuelta).
-- **Dispositivos**: estado en línea, métricas, última lectura, borrar sus datos y guía para conectar uno nuevo.
+- **Dispositivos**: registro con credencial propia, ficha (nombre, tipo, ubicación, etiquetas), conexión en tiempo real, gemelo digital, regenerar token y guía para conectar uno nuevo.
 - Exportar CSV por panel, vista ampliada, tema claro/oscuro, Ctrl+S para guardar, adaptable a celular.
 
 ### Análisis (`servicios/analisis`)
@@ -95,13 +97,15 @@ En el editor de una serie de tiempo → *Análisis*:
 
 nginx solo deja pasar `/api/analysis` con sesión válida (`auth_request` contra el backend).
 
-## Alertas
+## Alertas y reglas ("si… entonces…")
 
 Página *Alertas* o menú ⋮ de un panel → *Crear alerta*. Regla: dispositivo · métrica · condición (`>`, `<`, `>=`, `<=`) · umbral · durante. La condición **sin datos (dispositivo caído)** se dispara si el dispositivo (o una métrica) no envía nada durante más de N minutos y se resuelve sola cuando vuelve.
 
 Se evalúan cada 15 s con el último dato de los últimos 5 min: **Normal → Pendiente** al cumplirse, **→ Disparada** si se sigue cumpliendo todo el "durante", y vuelve a Normal si deja de cumplirse. Una alerta disparada pone en rojo los paneles con esa métrica, muestra un contador en el menú y un aviso emergente.
 
-**Reporte diario** (*Alertas → Reporte diario*): todos los días a la hora elegida (zona `America/Bogota`, variable `REPORT_TZ` del backend) llega por Telegram el resumen del día anterior: mínimo, máximo y promedio de cada métrica, alertas disparadas y dispositivos que dejaron de enviar. *Enviar ahora* manda el de hoy hasta el momento o el de ayer completo. Está activo a las 07:00.
+**Motor de reglas** (sección *Entonces…* de la regla): además del aviso por Telegram (opcional), una regla puede **enviar comandos a dispositivos al dispararse y al resolverse**. Ejemplo: *si* `sensor-1 · temperatura > 30` durante 1 min, *entonces* `ventilador ← encendido = 1`; *al resolverse*, `ventilador ← encendido = 0`. Los comandos pasan al estado deseado del gemelo digital, así llegan aunque el dispositivo esté desconectado en ese momento. Las acciones ejecutadas quedan en el historial.
+
+**Reporte diario** (*Alertas → Reporte diario*): todos los días a la hora elegida (zona `America/Bogota`, variable `REPORT_TZ` del backend) llega por Telegram el resumen del día anterior: mínimo, máximo y promedio de cada métrica, alertas disparadas y dispositivos que dejaron de enviar. *Enviar ahora* manda el de hoy hasta el momento o el de ayer completo. Está activo (hora configurable en esa misma tarjeta).
 
 **Avisos por Telegram** (configurado con el bot @Claudia_Monitor_bot). Para cambiar de bot o de chat:
 
@@ -117,23 +121,29 @@ Se evalúan cada 15 s con el último dato de los últimos 5 min: **Normal → Pe
 
 ## Dispositivos
 
-Cualquier dispositivo publica por MQTT en el tópico `iot/<dispositivo>/telemetry` un JSON con campos numéricos:
+**1. Registro y credenciales.** En *Dispositivos → Registrar dispositivo* se elige su identificador (minúsculas, números, `-` y `_`), nombre, tipo, ubicación y etiquetas. La plataforma entrega su **usuario MQTT (= su identificador) y su token**, que se muestra una sola vez (en la base solo queda su hash SHA-256). Si se pierde o se filtra, *Regenerar token*: el anterior deja de servir y se cierran sus conexiones abiertas.
+
+**2. Seguridad en el broker** (`kubernetes/broker-mqtt.yaml`). EMQX valida cada conexión preguntándole al backend (`/internal/mqtt/auth`, solo accesible dentro del clúster) y aplica una ACL: cada dispositivo **solo** puede publicar en `iot/<su id>/telemetry` y **solo** leer `iot/<su id>/cmd`; no puede espiar ni suplantar a otro. Lo que no está permitido se niega. El usuario `iot` es del backend.
+
+**3. Telemetría.** El dispositivo publica en `iot/<id>/telemetry` un JSON con campos numéricos:
 
 ```json
 {"temperatura": 22.5, "humedad": 60.1}
 ```
 
-`"ts"` (ISO 8601) es opcional; si falta, se usa la hora de llegada. Cada campo numérico aparece solo en el visualizador.
+`"ts"` (ISO 8601) es opcional; si falta, se usa la hora de llegada. Sirve para enviar datos guardados mientras no hubo red.
 
-**Recibir comandos** (paneles de control): el dispositivo se suscribe a `iot/<dispositivo>/cmd`. Llegan como `{"encendido": 1}` (o `{"<comando>": <número>}`); el dispositivo aplica el valor y lo reporta en su telemetría, así el panel confirma que se cumplió.
+**4. Gemelo digital.** Cada dispositivo registrado tiene un estado **deseado** (lo que piden los controles, las reglas o el propio gemelo) y uno **reportado** (el último valor de cada métrica). El deseado completo se publica como mensaje **retenido** en `iot/<id>/cmd`: el dispositivo lo recibe al conectarse aunque haya estado apagado cuando se pidió. Debe aplicarlo y reportarlo en su telemetría; entonces la propiedad queda *sincronizada* (si no, *pendiente*). Los botones del panel de control son acciones puntuales y no quedan en el estado deseado.
 
-Probar con el simulador (ya obedece `encendido`, `intervalo` en segundos y cualquier otro número):
+**5. Conexión.** El estado *Conectado / Desconectado* sale del propio broker (se consulta cada 15 s), no de cuándo llegó el último dato.
+
+Probar con el simulador (aplica el estado deseado: `encendido`, `intervalo` en segundos y cualquier otro número):
 
 ```powershell
 pip install paho-mqtt==2.1.0
-python dispositivos/simulador.py --host wss://iot.javier.life/mqtt --password <contraseña MQTT>   # cifrado
-python dispositivos/simulador.py --host 57.156.67.235 --password <contraseña MQTT>                 # sin cifrar
-# opcional: --device otro-nombre  --interval 5  --lat 4.6584 --lon -74.0937 (posición inicial del GPS)
+python dispositivos/simulador.py --host wss://iot.javier.life/mqtt --device <id> --password <token>   # cifrado
+python dispositivos/simulador.py --host 57.156.67.235 --device <id> --password <token>               # sin cifrar
+# opcional: --interval 5  --lat 4.6584 --lon -74.0937 (posición inicial del GPS)
 ```
 
 ## Almacenamiento (TimescaleDB)
@@ -154,7 +164,7 @@ Compila la imagen dentro del clúster, la sube al registro `iotproyectojavierbr.
 **Chequeos:**
 
 ```powershell
-py -m pytest servicios/backend     # parseo MQTT, sesión, alertas, elección de resumen, reporte diario
+py -m pytest servicios/backend     # parseo MQTT, sesión, alertas, resúmenes, reporte, credenciales y gemelo digital
 py -m pytest servicios/analisis    # anomalías y pronóstico (necesita numpy)
 cd servicios/frontend; npx tsx src/lib/tests.check.ts   # cortes en las series, variables y fórmulas
 ```
@@ -167,7 +177,7 @@ cd servicios/frontend; npx tsx src/lib/tests.check.ts   # cortes en las series, 
 az aks get-credentials --resource-group Javier --name Proyecto
 kubectl apply -f kubernetes/namespace.yaml
 # Secrets (solo la primera vez; cambia las contraseñas)
-kubectl -n iot create secret generic iot-secrets --from-literal=db-password=<pw-db> --from-literal=mqtt-password=<pw-mqtt> "--from-literal=mqtt-users.csv=user_id,password,is_superuser`niot,<pw-mqtt>,false" --from-literal=app-password=<pw-visualizador> --from-literal=session-secret=<40+ caracteres aleatorios>
+kubectl -n iot create secret generic iot-secrets --from-literal=db-password=<pw-db> --from-literal=mqtt-password=<pw-mqtt> "--from-literal=mqtt-users.csv=user_id,password,is_superuser`niot,<pw-mqtt>,false" --from-literal=app-password=<pw-visualizador> --from-literal=session-secret=<40+ caracteres aleatorios> --from-literal=emqx-api-key=iotback:<32+ caracteres aleatorios>
 kubectl -n iot create secret generic telegram --from-literal=token=<TOKEN> --from-literal=chat-id=<CHAT_ID>   # opcional
 kubectl -n iot create secret generic cloudflare-tunnel --from-literal=token=<token del túnel de Cloudflare>
 kubectl apply -f kubernetes/base-de-datos.yaml -f kubernetes/broker-mqtt.yaml -f kubernetes/tunel-cloudflare.yaml

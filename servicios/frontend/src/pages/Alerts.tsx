@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, BellOff, CalendarClock, Pencil, Plus, Send, Trash2 } from "lucide-react";
-import { api, type AlertOp, type AlertRule, type AlertRuleInput } from "../lib/api";
+import { api, type AlertOp, type AlertRule, type AlertRuleInput, type RuleAction } from "../lib/api";
 import { fmtValue } from "../lib/format";
 import { toast } from "../lib/hooks";
 import { timeAgo } from "../lib/time";
@@ -70,18 +70,18 @@ export function AlertsPage() {
     <div className="mx-auto max-w-6xl p-4 md:p-8">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Alertas</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Alertas y reglas</h1>
           <p className="mt-1 text-sm text-muted">
             Se evalúan cada {alerts.data?.eval_s ?? 15} s con el último dato de los últimos 5 minutos. Una alerta disparada pone
-            en rojo los paneles que muestran esa métrica.
+            en rojo los paneles que muestran esa métrica y puede ejecutar acciones automáticas: “si… entonces…”.
           </p>
         </div>
         <Button
           variant="primary"
           icon={Plus}
-          onClick={() => setEditing({ rule: { name: "", device: "", metric: "", op: ">", threshold: 0, for_s: 60, enabled: true } })}
+          onClick={() => setEditing({ rule: { name: "", device: "", metric: "", op: ">", threshold: 0, for_s: 60, enabled: true, notify: true, on_fire: [], on_resolve: [] } })}
         >
-          Nueva alerta
+          Nueva regla
         </Button>
       </div>
 
@@ -133,6 +133,21 @@ export function AlertsPage() {
                         {OP_LABEL[r.op]} <b className="text-fg">{fmtValue(r.threshold)}</b> {forLabel(r.for_s)}
                       </>
                     )}
+                    {(r.on_fire.length > 0 || r.on_resolve.length > 0 || !r.notify) && (
+                      <p className="mt-1 flex flex-wrap gap-1 text-xs">
+                        {r.on_fire.map((a, i) => (
+                          <span key={`f${i}`} className="rounded bg-accent/10 px-1.5 py-0.5 text-accent" title="Al dispararse">
+                            ⚙ {a.device} ← {a.name} = {fmtValue(a.value)}
+                          </span>
+                        ))}
+                        {r.on_resolve.map((a, i) => (
+                          <span key={`r${i}`} className="rounded bg-ok/10 px-1.5 py-0.5 text-ok" title="Al resolverse">
+                            ↺ {a.device} ← {a.name} = {fmtValue(a.value)}
+                          </span>
+                        ))}
+                        {!r.notify && <span className="rounded bg-surface-2 px-1.5 py-0.5 text-muted">sin aviso</span>}
+                      </p>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">{r.enabled ? valueLabel(r.op, r.last_value) : "—"}</td>
                   <td className="px-2">
@@ -172,6 +187,7 @@ export function AlertsPage() {
               <span className="text-muted">
                 {targetLabel(e.device, e.metric)}: {valueLabel(e.op, e.value)}
               </span>
+              {e.actions && <span className="text-xs text-accent">⚙ {e.actions}</span>}
               <span className="ml-auto text-xs text-muted" title={new Date(e.time).toLocaleString("es")}>
                 {timeAgo(e.time)}
               </span>
@@ -314,7 +330,7 @@ export function AlertRuleModal({ id, initial, onClose }: { id?: string; initial:
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["alerts"] });
-      toast(id ? "Alerta actualizada" : "Alerta creada");
+      toast(id ? "Regla actualizada" : "Regla creada");
       onClose();
     },
     onError: (e) => toast(e.message, "error"),
@@ -322,13 +338,16 @@ export function AlertRuleModal({ id, initial, onClose }: { id?: string; initial:
 
   const metrics = devices.data?.find((d) => d.device === r.device)?.metrics ?? [];
   const nodata = r.op === "nodata";
-  const valid = r.device.trim() && (nodata || r.metric.trim()) && Number.isFinite(r.threshold) && (!nodata || r.threshold > 0);
+  const actionsOk = [...r.on_fire, ...r.on_resolve].every(
+    (a) => /^[a-z0-9][a-z0-9_-]{1,62}$/.test(a.device) && /^[A-Za-z0-9_-]+$/.test(a.name) && Number.isFinite(a.value),
+  );
+  const valid = r.device.trim() && (nodata || r.metric.trim()) && Number.isFinite(r.threshold) && (!nodata || r.threshold > 0) && actionsOk;
 
   return (
     <Modal
       open
       onClose={onClose}
-      title={id ? "Editar alerta" : "Nueva alerta"}
+      title={id ? "Editar regla" : "Nueva regla"}
       footer={
         <>
           <Button onClick={onClose}>Cancelar</Button>
@@ -411,11 +430,74 @@ export function AlertRuleModal({ id, initial, onClose }: { id?: string; initial:
             </p>
           </>
         )}
+        <section className="flex flex-col gap-3 rounded-lg border border-border p-3">
+          <h3 className="text-sm font-semibold">Entonces…</h3>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" className="size-4 accent-[var(--accent)]" checked={r.notify} onChange={(e) => set({ notify: e.target.checked })} />
+            Avisar por Telegram al dispararse y al resolverse
+          </label>
+          <ActionList
+            title="Al dispararse, enviar comando"
+            actions={r.on_fire}
+            devices={devices.data?.filter((d) => d.registered).map((d) => d.device) ?? []}
+            onChange={(on_fire) => set({ on_fire })}
+          />
+          <ActionList
+            title="Al resolverse, enviar comando"
+            actions={r.on_resolve}
+            devices={devices.data?.filter((d) => d.registered).map((d) => d.device) ?? []}
+            onChange={(on_resolve) => set({ on_resolve })}
+          />
+          <p className="text-xs text-muted">
+            Ejemplo: si la temperatura supera 30 °C durante 1 min, enviar <code>encendido = 1</code> al ventilador; al
+            resolverse, <code>encendido = 0</code>. El comando pasa al estado deseado del dispositivo, así lo recibe aunque
+            esté desconectado en ese momento.
+          </p>
+        </section>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" className="size-4 accent-[var(--accent)]" checked={r.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
           Activa
         </label>
       </form>
     </Modal>
+  );
+}
+
+/** Lista editable de acciones (comando a un dispositivo) de una regla. */
+function ActionList({
+  title,
+  actions,
+  devices,
+  onChange,
+}: {
+  title: string;
+  actions: RuleAction[];
+  devices: string[];
+  onChange: (a: RuleAction[]) => void;
+}) {
+  const upd = (i: number, p: Partial<RuleAction>) => onChange(actions.map((a, j) => (j === i ? { ...a, ...p } : a)));
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-muted">{title}</p>
+        <Button
+          variant="ghost"
+          icon={Plus}
+          disabled={actions.length >= 10}
+          onClick={() => onChange([...actions, { type: "command", device: devices[0] ?? "", name: "encendido", value: 1 }])}
+        >
+          Acción
+        </Button>
+      </div>
+      <datalist id="rule-devices">{devices.map((d) => <option key={d} value={d} />)}</datalist>
+      {actions.map((a, i) => (
+        <div key={i} className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_5rem_auto] items-center gap-2">
+          <input className={inputCls} list="rule-devices" value={a.device} placeholder="dispositivo" aria-label="Dispositivo" onChange={(e) => upd(i, { device: e.target.value })} />
+          <input className={cx(inputCls, "font-mono")} value={a.name} placeholder="comando" aria-label="Comando" onChange={(e) => upd(i, { name: e.target.value })} />
+          <input type="number" step="any" className={inputCls} value={a.value} aria-label="Valor" onChange={(e) => upd(i, { value: Number(e.target.value) })} />
+          <Button variant="ghost" icon={Trash2} aria-label="Quitar acción" onClick={() => onChange(actions.filter((_, j) => j !== i))} />
+        </div>
+      ))}
+    </div>
   );
 }

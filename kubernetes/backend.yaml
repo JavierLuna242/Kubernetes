@@ -53,6 +53,13 @@ spec:
                 secretKeyRef:
                   name: iot-secrets
                   key: session-secret
+            - name: EMQX_API
+              value: http://broker-ws:18083
+            - name: EMQX_API_KEY # "clave:secreto" de la API del broker (estado de conexión de los dispositivos)
+              valueFrom:
+                secretKeyRef:
+                  name: iot-secrets
+                  key: emqx-api-key
             - name: TELEGRAM_TOKEN # opcional: avisos de alertas (Secret "telegram", ver README)
               valueFrom:
                 secretKeyRef:

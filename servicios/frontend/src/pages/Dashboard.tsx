@@ -295,6 +295,9 @@ function DashboardView({ dash, kiosk, rotation }: { dash: Dashboard; kiosk: bool
           threshold: th?.value ?? 0,
           for_s: 60,
           enabled: true,
+          notify: true,
+          on_fire: [],
+          on_resolve: [],
         });
       }}
       onAnnotate={newAnnotation}

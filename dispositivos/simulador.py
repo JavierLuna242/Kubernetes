@@ -1,17 +1,18 @@
 """Simulador de dispositivo: publica por MQTT cada N segundos temperatura, humedad, presión, un estado
 encendido/apagado (0/1) y una posición GPS (lat/lon), y obedece los comandos que le envía el visualizador.
 
-Uso:
+Uso (primero registra el dispositivo en la página Dispositivos: te da su token):
     pip install paho-mqtt==2.1.0
-    python simulador.py --host wss://iot.javier.life/mqtt --password <contraseña MQTT>   (cifrado, recomendado)
-    python simulador.py --host <IP del broker> --password <contraseña MQTT>               (sin cifrar, puerto 1883)
-        opcionales: [--device sensor-1] [--interval 2] [--lat 4.6584 --lon -74.0937]
+    python simulador.py --host wss://iot.javier.life/mqtt --device <id> --password <token>   (cifrado, recomendado)
+    python simulador.py --host <IP del broker> --device <id> --password <token>               (sin cifrar, puerto 1883)
+        opcionales: [--interval 2] [--lat 4.6584 --lon -74.0937]
+El usuario MQTT es el id del dispositivo: solo puede publicar en iot/<id>/telemetry y leer iot/<id>/cmd.
 
 Formato (sirve igual para un dispositivo real):
     telemetría  iot/<dispositivo>/telemetry   {"temperatura": 22.5, "humedad": 60.1, ...}   ("ts" ISO 8601 opcional)
     comandos    iot/<dispositivo>/cmd         {"encendido": 1}  o  {"intervalo": 5}  o  {"<nombre>": <número>}
-Al recibir un comando, el dispositivo aplica el valor y lo reporta en su telemetría: así el panel de control
-confirma que se cumplió.
+En iot/<id>/cmd llega el estado deseado completo (también al conectarse, como mensaje retenido): el dispositivo
+aplica cada valor y lo reporta en su telemetría, y así el gemelo digital queda sincronizado.
 """
 import argparse
 import json
@@ -26,9 +27,9 @@ import paho.mqtt.client as mqtt
 p = argparse.ArgumentParser()
 p.add_argument("--host", required=True, help="IP/host (MQTT en 1883) o URL wss://host/mqtt")
 p.add_argument("--port", type=int, default=1883)
-p.add_argument("--user", default="iot")
-p.add_argument("--password", required=True)
-p.add_argument("--device", default="sensor-1")
+p.add_argument("--user", help="usuario MQTT (por defecto, el id del dispositivo)")
+p.add_argument("--password", required=True, help="token del dispositivo")
+p.add_argument("--device", required=True, help="id con el que se registró")
 p.add_argument("--interval", type=float, default=2.0)
 p.add_argument("--lat", type=float, default=4.6584)  # posición inicial del GPS simulado
 p.add_argument("--lon", type=float, default=-74.0937)
@@ -40,10 +41,16 @@ wake = threading.Event()  # despierta el bucle para confirmar un comando de inme
 
 
 def on_connect(client, userdata, flags, reason, props):
+    if reason.is_failure:  # token incorrecto o dispositivo no registrado
+        print(f"conexión rechazada: {reason}. ¿Registraste '{args.device}' y usaste su token?")
+        client.disconnect()
+        return
     client.subscribe(cmd_topic, qos=1)  # al reconectar también se vuelve a suscribir
 
 
 def on_message(client, userdata, msg):
+    if not msg.payload:  # el estado deseado retenido se borró
+        return
     try:
         cmd = json.loads(msg.payload)
         for k, v in cmd.items():
@@ -67,7 +74,7 @@ if url.scheme in ("ws", "wss"):  # MQTT sobre WebSocket (por el dominio, con TLS
 else:
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     host, port = args.host, args.port
-client.username_pw_set(args.user, args.password)
+client.username_pw_set(args.user or args.device, args.password)
 client.on_connect = on_connect
 client.on_message = on_message
 client.connect(host, port)

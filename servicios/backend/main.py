@@ -8,10 +8,13 @@ Cada campo numérico se guarda como una fila (time, device, metric, value).
 Todo /api (salvo health/login/logout) exige la cookie de sesión que entrega /api/login.
 """
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
 import os
+import re
+import secrets
 import time
 import urllib.parse
 import urllib.request
@@ -82,6 +85,24 @@ CREATE TABLE IF NOT EXISTS settings (
     key   text  PRIMARY KEY,
     value jsonb NOT NULL
 );
+CREATE TABLE IF NOT EXISTS devices (
+    id           text        PRIMARY KEY,  -- = usuario MQTT y nombre en los tópicos iot/<id>/...
+    name         text        NOT NULL DEFAULT '',
+    type         text        NOT NULL DEFAULT '',
+    location     text        NOT NULL DEFAULT '',
+    tags         text[]      NOT NULL DEFAULT '{}',
+    token_hash   text        NOT NULL,     -- sha256 del token; el token solo se muestra al crearlo
+    desired      jsonb       NOT NULL DEFAULT '{}',  -- gemelo digital: estado pedido por la plataforma
+    reported     jsonb       NOT NULL DEFAULT '{}',  -- último valor de cada métrica que envió el dispositivo
+    reported_at  timestamptz,
+    connected    boolean     NOT NULL DEFAULT false,
+    connected_at timestamptz,
+    created_at   timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS notify boolean NOT NULL DEFAULT true;
+ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS on_fire jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS on_resolve jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS actions text NOT NULL DEFAULT '';
 """
 
 # Funciones de agregación permitidas (lista blanca: nunca se interpola texto del usuario en el SQL).
@@ -195,11 +216,100 @@ async def mqtt_loop(pool: asyncpg.Pool) -> None:
                         continue
                     if rows:
                         await pool.executemany("INSERT INTO readings VALUES ($1, $2, $3, $4)", rows)
+                        # Gemelo digital: último valor reportado de cada métrica (solo dispositivos registrados).
+                        await pool.execute(
+                            "UPDATE devices SET reported = reported || $2, reported_at = greatest(reported_at, $3) WHERE id = $1",
+                            rows[0][1], {m: v for _, _, m, v in rows}, rows[0][0],
+                        )
                         await broadcast(rows)
         except aiomqtt.MqttError as e:
             mqtt_client = None
             print(f"MQTT desconectado ({e}), reintento en 5 s", flush=True)
             await asyncio.sleep(5)
+
+
+# ---------- Dispositivos: credenciales, gemelo digital y conexión ----------
+# Cada dispositivo registrado se conecta a MQTT con usuario = su id y contraseña = su token. EMQX pregunta a
+# /internal/mqtt/auth si es válido, y su ACL (kubernetes/broker-mqtt.yaml) solo le deja publicar en
+# iot/<id>/telemetry y leer iot/<id>/cmd. El usuario "iot" es del backend y no puede ser un dispositivo.
+
+DEVICE_ID = r"^[a-z0-9][a-z0-9_-]{1,62}$"
+RESERVED_IDS = {"iot"}
+PRESENCE_S = 15
+
+
+def new_token() -> str:
+    return secrets.token_urlsafe(18)  # 144 bits: no hace falta un hash lento
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def token_ok(stored_hash: str | None, token: str) -> bool:
+    return stored_hash is not None and hmac.compare_digest(stored_hash, hash_token(token))
+
+
+def twin_diff(desired: dict, reported: dict) -> dict[str, str]:
+    """Estado de cada propiedad deseada: 'sincronizado' si el dispositivo ya reporta ese valor, si no 'pendiente'."""
+    return {k: "sincronizado" if k in reported and abs(float(reported[k]) - float(v)) < 1e-9 else "pendiente"
+            for k, v in desired.items()}
+
+
+async def publish_command(pool: asyncpg.Pool, device: str, name: str, value: float, momentary: bool = False) -> str:
+    """Envía un comando. Si no es momentáneo, pasa a ser parte del estado deseado del gemelo y se publica el
+    estado deseado completo como mensaje retenido: el dispositivo lo recibe aunque se conecte después."""
+    if mqtt_client is None:
+        raise HTTPException(503, "El backend no está conectado al broker MQTT")
+    desired = None
+    if not momentary:
+        desired = await pool.fetchval(
+            "UPDATE devices SET desired = desired || $2 WHERE id = $1 RETURNING desired", device, {name: value}
+        )
+    payload = json.dumps(desired if desired is not None else {name: value})
+    await mqtt_client.publish(f"iot/{device}/cmd", payload, qos=1, retain=desired is not None)
+    return payload
+
+
+def emqx_api(method: str, path: str) -> Any:
+    """API REST de EMQX (estado de conexión, desconectar clientes). Bloqueante."""
+    key = os.getenv("EMQX_API_KEY", "")
+    req = urllib.request.Request(f"{os.getenv('EMQX_API', 'http://broker:18083')}/api/v5{path}", method=method)
+    req.add_header("Authorization", "Basic " + base64.b64encode(key.encode()).decode())
+    with urllib.request.urlopen(req, timeout=10) as r:
+        body = r.read()
+        return json.loads(body) if body else None
+
+
+def connected_usernames() -> set[str]:
+    users, page = set(), 1
+    while True:
+        r = emqx_api("GET", f"/clients?limit=1000&page={page}&fields=username,connected")
+        users |= {c["username"] for c in r["data"] if c.get("connected") and c.get("username")}
+        if not r["meta"].get("hasnext"):
+            return users
+        page += 1
+
+
+def kick(device: str) -> None:
+    """Desconecta las sesiones abiertas de un dispositivo (al regenerar su token o eliminarlo)."""
+    for c in emqx_api("GET", f"/clients?username={urllib.parse.quote(device)}&fields=clientid")["data"]:
+        emqx_api("DELETE", f"/clients/{urllib.parse.quote(c['clientid'], safe='')}")
+
+
+async def presence_loop(pool: asyncpg.Pool) -> None:
+    """Sincroniza cada PRESENCE_S segundos qué dispositivos registrados tienen una conexión abierta en el broker."""
+    while True:
+        try:
+            online = list(await asyncio.to_thread(connected_usernames))
+            await pool.execute(
+                "UPDATE devices SET connected = id = ANY($1), "
+                "connected_at = CASE WHEN (id = ANY($1)) <> connected THEN now() ELSE connected_at END",
+                online,
+            )
+        except Exception as e:
+            print(f"no se pudo consultar las conexiones del broker: {e}", flush=True)
+        await asyncio.sleep(PRESENCE_S)
 
 
 # ---------- Alertas ----------
@@ -282,13 +392,33 @@ async def evaluate_alerts(pool: asyncpg.Pool) -> None:
         )
         event = "firing" if state == "firing" != r["state"] else "resolved" if r["state"] == "firing" != state else None
         if event:
+            # Motor de reglas: "si se cumple la condición, entonces…" (y opcionalmente "cuando deja de cumplirse…").
+            done = await run_actions(pool, r["on_fire"] if event == "firing" else r["on_resolve"])
             await pool.execute(
-                "INSERT INTO alert_events (rule_id, rule_name, device, metric, state, value, op, threshold) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-                r["id"], r["name"], r["device"], r["metric"], event, value, r["op"], r["threshold"],
+                "INSERT INTO alert_events (rule_id, rule_name, device, metric, state, value, op, threshold, actions) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+                r["id"], r["name"], r["device"], r["metric"], event, value, r["op"], r["threshold"], "; ".join(done),
             )
-            icon, verb = ("🔴", "DISPARADA") if event == "firing" else ("✅", "resuelta")
-            await send(f"{icon} Alerta {verb}: {r['name']}\n{describe(r['device'], r['metric'], r['op'], r['threshold'], value)}")
+            if r["notify"]:
+                icon, verb = ("🔴", "DISPARADA") if event == "firing" else ("✅", "resuelta")
+                extra = "".join(f"\n⚙️ {a}" for a in done)
+                await send(f"{icon} Alerta {verb}: {r['name']}\n{describe(r['device'], r['metric'], r['op'], r['threshold'], value)}{extra}")
+
+
+def action_text(a: dict) -> str:
+    return f"{a['device']} ← {a['name']} = {a['value']:g}"
+
+
+async def run_actions(pool: asyncpg.Pool, actions: list[dict]) -> list[str]:
+    """Ejecuta las acciones de una regla. Un fallo (broker caído) se registra y no frena a las demás."""
+    done = []
+    for a in actions:
+        try:
+            await publish_command(pool, a["device"], a["name"], a["value"])
+            done.append(action_text(a))
+        except Exception as e:
+            done.append(f"{action_text(a)} (falló: {getattr(e, 'detail', e)})")
+    return done
 
 
 # ---------- Reporte diario por Telegram ----------
@@ -425,7 +555,7 @@ async def lifespan(app: FastAPI):
     app.state.pool = await asyncpg.create_pool(os.environ["DATABASE_URL"], init=_init_conn)
     await app.state.pool.execute(SCHEMA)
     await setup_storage(app.state.pool)
-    tasks = [asyncio.create_task(f(app.state.pool)) for f in (mqtt_loop, alert_loop, report_loop)]
+    tasks = [asyncio.create_task(f(app.state.pool)) for f in (mqtt_loop, alert_loop, report_loop, presence_loop)]
     yield
     for t in tasks:
         t.cancel()
@@ -481,22 +611,102 @@ async def me(user: str = Depends(auth)):
 
 # --- Dispositivos ---
 
+class DeviceInfo(BaseModel):
+    name: str = Field("", max_length=100)
+    type: str = Field("", max_length=50)
+    location: str = Field("", max_length=100)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+
+
+class NewDevice(DeviceInfo):
+    id: str = Field(pattern=DEVICE_ID)
+
+
 @api.get("/devices")
 async def devices():
-    """Dispositivos con datos en los últimos 30 días, sus métricas y última lectura."""
+    """Dispositivos registrados y fuentes con datos de los últimos 30 días (registradas o no), con su gemelo digital."""
     rows = await app.state.pool.fetch(
-        "SELECT device, array_agg(DISTINCT metric ORDER BY metric) AS metrics, max(time) AS last_seen, "
-        "count(*) AS readings FROM readings WHERE time > now() - interval '30 days' "
-        "GROUP BY device ORDER BY device"
+        "WITH data AS (SELECT device, array_agg(DISTINCT metric ORDER BY metric) AS metrics, max(time) AS last_seen, "
+        "  count(*) AS readings FROM readings WHERE time > now() - interval '30 days' GROUP BY device) "
+        "SELECT coalesce(d.id, x.device) AS device, coalesce(x.metrics, '{}') AS metrics, x.last_seen, "
+        "  coalesce(x.readings, 0) AS readings, d.id IS NOT NULL AS registered, d.name, d.type, d.location, d.tags, "
+        "  d.desired, d.reported, d.reported_at, d.connected, d.connected_at, d.created_at "
+        "FROM devices d FULL OUTER JOIN data x ON x.device = d.id ORDER BY 1"
     )
-    return [
-        {"device": r["device"], "metrics": r["metrics"], "last_seen": r["last_seen"], "readings": r["readings"]}
-        for r in rows
-    ]
+    out = []
+    for r in rows:
+        r = dict(r)
+        r["twin"] = twin_diff(r["desired"] or {}, r["reported"] or {}) if r["registered"] else {}
+        out.append(r)
+    return out
+
+
+@api.post("/devices")
+async def register_device(d: NewDevice):
+    """Registra un dispositivo y devuelve su token MQTT. El token solo se muestra esta vez."""
+    if d.id in RESERVED_IDS:
+        raise HTTPException(422, f'"{d.id}" está reservado para el backend')
+    token = new_token()
+    try:
+        await app.state.pool.execute(
+            "INSERT INTO devices (id, name, type, location, tags, token_hash) VALUES ($1,$2,$3,$4,$5,$6)",
+            d.id, d.name, d.type, d.location, d.tags, hash_token(token),
+        )
+    except asyncpg.UniqueViolationError:
+        raise HTTPException(409, f'Ya existe un dispositivo "{d.id}"')
+    return {"id": d.id, "username": d.id, "token": token}
+
+
+@api.put("/devices/{device}")
+async def update_device(device: str, d: DeviceInfo):
+    status = await app.state.pool.execute(
+        "UPDATE devices SET name=$2, type=$3, location=$4, tags=$5 WHERE id=$1", device, d.name, d.type, d.location, d.tags
+    )
+    if status.endswith(" 0"):
+        raise HTTPException(404, "Dispositivo no registrado")
+    return {"ok": True}
+
+
+@api.post("/devices/{device}/token")
+async def rotate_token(device: str):
+    """Genera un token nuevo: el anterior deja de servir y se cierran sus conexiones abiertas."""
+    token = new_token()
+    status = await app.state.pool.execute("UPDATE devices SET token_hash=$2 WHERE id=$1", device, hash_token(token))
+    if status.endswith(" 0"):
+        raise HTTPException(404, "Dispositivo no registrado")
+    try:
+        await asyncio.to_thread(kick, device)
+    except Exception as e:
+        print(f"no se pudo desconectar a {device}: {e}", flush=True)
+    return {"id": device, "username": device, "token": token}
+
+
+@api.delete("/devices/{device}/desired/{name}")
+async def clear_desired(device: str, name: str):
+    """Quita una propiedad del estado deseado (y vuelve a publicar el estado deseado retenido)."""
+    desired = await app.state.pool.fetchval("UPDATE devices SET desired = desired - $2 WHERE id=$1 RETURNING desired", device, name)
+    if desired is None:
+        raise HTTPException(404, "Dispositivo no registrado")
+    if mqtt_client is not None:
+        await mqtt_client.publish(f"iot/{device}/cmd", json.dumps(desired) if desired else b"", qos=1, retain=True)
+    return {"desired": desired}
 
 
 @api.delete("/devices/{device}")
 async def delete_device(device: str):
+    """Elimina el dispositivo: su registro (credencial y gemelo), sus conexiones y todas sus lecturas."""
+    registered = await app.state.pool.execute("DELETE FROM devices WHERE id = $1", device)
+    if not registered.endswith(" 0"):
+        try:
+            if mqtt_client is not None:  # borra el estado deseado retenido en el broker
+                await mqtt_client.publish(f"iot/{device}/cmd", b"", qos=1, retain=True)
+            await asyncio.to_thread(kick, device)
+        except Exception as e:
+            print(f"no se pudo desconectar a {device}: {e}", flush=True)
+    return {"deleted": await delete_readings(device)}
+
+
+async def delete_readings(device: str) -> int:
     """Borra todas las lecturas de un dispositivo y recalcula los resúmenes de ese período."""
     pool = app.state.pool
     first, last = await pool.fetchrow("SELECT min(time), max(time) FROM readings WHERE device = $1", device)
@@ -509,25 +719,36 @@ async def delete_device(device: str):
         if end > start:
             for view, *_ in ROLLUPS:  # CALL no admite parámetros preparados; las fechas vienen de la base
                 await pool.execute(f"CALL refresh_continuous_aggregate('{view}', '{start.isoformat()}', '{end.isoformat()}')")
-    return {"deleted": int(status.split()[-1])}
+    return int(status.split()[-1])
 
 
 class Command(BaseModel):
     name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_\-]+$")
     value: float
+    momentary: bool = False  # botón: acción puntual, no forma parte del estado deseado
 
 
 @api.post("/devices/{device}/command")
 async def send_command(device: str, c: Command):
-    """Publica {name: value} en iot/<dispositivo>/cmd. El dispositivo debe suscribirse a ese tópico y,
-    para confirmar, reportar el nuevo estado en su telemetría."""
-    if any(ch in device for ch in "/+#") or not device:
+    """Publica el comando en iot/<dispositivo>/cmd (ver publish_command). El dispositivo confirma reportando el
+    nuevo valor en su telemetría."""
+    if not re.fullmatch(DEVICE_ID, device):
         raise HTTPException(422, "Nombre de dispositivo inválido")
-    if mqtt_client is None:
-        raise HTTPException(503, "El back no está conectado al broker MQTT")
-    payload = json.dumps({c.name: c.value})
-    await mqtt_client.publish(f"iot/{device}/cmd", payload, qos=1)
+    payload = await publish_command(app.state.pool, device, c.name, c.value, c.momentary)
     return {"ok": True, "topic": f"iot/{device}/cmd", "payload": payload}
+
+
+class MqttAuth(BaseModel):
+    username: str = ""
+    password: str = ""
+
+
+@app.post("/internal/mqtt/auth")
+async def mqtt_auth(a: MqttAuth):
+    """EMQX consulta aquí cada conexión que no es del backend. Solo accesible dentro del clúster: nginx publica
+    /api y /mqtt, no /internal."""
+    stored = await app.state.pool.fetchval("SELECT token_hash FROM devices WHERE id = $1", a.username)
+    return {"result": "allow" if token_ok(stored, a.password) else "deny", "is_superuser": False}
 
 
 # --- Consultas ---
@@ -618,6 +839,14 @@ async def delete_dashboard(id: uuid.UUID):
 
 # --- Alertas ---
 
+class Action(BaseModel):
+    """Acción de una regla: enviar un comando a un dispositivo (pasa a su estado deseado)."""
+    type: Literal["command"] = "command"
+    device: str = Field(pattern=DEVICE_ID)
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_\-]+$")
+    value: float
+
+
 class AlertRule(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     device: str = Field(min_length=1)
@@ -626,6 +855,9 @@ class AlertRule(BaseModel):
     threshold: float  # con "nodata": minutos sin datos
     for_s: int = Field(0, ge=0, le=86400)
     enabled: bool = True
+    notify: bool = True  # aviso por Telegram al dispararse y al resolverse
+    on_fire: list[Action] = Field(default_factory=list, max_length=10)
+    on_resolve: list[Action] = Field(default_factory=list, max_length=10)
 
     @model_validator(mode="after")
     def _check(self):
@@ -650,9 +882,10 @@ async def list_alerts():
 async def create_alert(a: AlertRule):
     new_id = uuid.uuid4()
     await app.state.pool.execute(
-        "INSERT INTO alert_rules (id, name, device, metric, op, threshold, for_s, enabled) "
-        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-        new_id, a.name, a.device, a.metric, a.op, a.threshold, a.for_s, a.enabled,
+        "INSERT INTO alert_rules (id, name, device, metric, op, threshold, for_s, enabled, notify, on_fire, on_resolve) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+        new_id, a.name, a.device, a.metric, a.op, a.threshold, a.for_s, a.enabled, a.notify,
+        [x.model_dump() for x in a.on_fire], [x.model_dump() for x in a.on_resolve],
     )
     return {"id": new_id}
 
@@ -662,8 +895,9 @@ async def update_alert(id: uuid.UUID, a: AlertRule):
     """Editar reinicia el estado: la regla se vuelve a evaluar desde cero."""
     status = await app.state.pool.execute(
         "UPDATE alert_rules SET name=$2, device=$3, metric=$4, op=$5, threshold=$6, for_s=$7, enabled=$8, "
-        "state='ok', since=NULL WHERE id=$1",
-        id, a.name, a.device, a.metric, a.op, a.threshold, a.for_s, a.enabled,
+        "notify=$9, on_fire=$10, on_resolve=$11, state='ok', since=NULL WHERE id=$1",
+        id, a.name, a.device, a.metric, a.op, a.threshold, a.for_s, a.enabled, a.notify,
+        [x.model_dump() for x in a.on_fire], [x.model_dump() for x in a.on_resolve],
     )
     if status.endswith(" 0"):
         raise HTTPException(404, "Alerta no encontrada")
