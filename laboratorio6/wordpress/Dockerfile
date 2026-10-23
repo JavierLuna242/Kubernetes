@@ -36,14 +36,15 @@ COPY seguridad/php.ini /usr/local/etc/php/conf.d/zz-seguridad.ini
 RUN cp /usr/local/etc/php/php.ini-production /usr/local/etc/php/php.ini && a2enconf seguridad
 COPY seguridad/seguridad.php /var/www/html/wp-content/mu-plugins/seguridad.php
 
-COPY wp-config.php .htaccess favicon.ico /var/www/html/
+COPY raiz/ /var/www/html/
 COPY tema /var/www/html/wp-content/themes/cafe-altura
-COPY contenido /usr/local/share/sitio
-COPY configurar-sitio.sh /usr/local/bin/configurar-sitio
+COPY instalacion/contenido /usr/local/share/sitio
+COPY instalacion/configurar-sitio.sh /usr/local/bin/configurar-sitio
 
 # El código es de root y de solo lectura para Apache/PHP (www-data): un fallo en PHP no puede reescribir el sitio.
 # Lo único escribible es wp-content/uploads (el disco de medios). wp-config.php solo lo lee el grupo www-data.
 RUN chmod +x /usr/local/bin/configurar-sitio \
  && chown -R root:root /var/www/html && chmod -R u=rwX,go=rX /var/www/html \
+ && find /var/www/html -type f -perm /111 -exec chmod a-x {} + \
  && mkdir -p /var/www/html/wp-content/uploads && chown www-data:www-data /var/www/html/wp-content/uploads \
  && chown root:www-data /var/www/html/wp-config.php && chmod 640 /var/www/html/wp-config.php

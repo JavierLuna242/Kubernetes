@@ -21,29 +21,37 @@
 
 ```
 laboratorio6/
-├── wordpress/                 imagen propia (la compila desplegar.ps1 con el BuildKit del clúster)
-│   ├── Dockerfile             php:8.3-apache + gd/exif + WordPress 7.1.3 (verificado con sha1) + idioma es_CO + wp-cli + tipografías
-│   ├── wp-config.php          todo desde variables de entorno; URL fija (no la decide el Host); sin instalar plugins desde el panel
-│   ├── .htaccess              HTTP → HTTPS, bloqueo de ?author=, enlaces permanentes
-│   ├── seguridad/             apache.conf (cabeceras, sin PHP en medios, sin XML-RPC), php.ini (producción) y mu-plugin seguridad.php
-│   ├── favicon.ico            ícono de la taza
-│   ├── configurar-sitio.sh    instala, activa el tema y crea páginas, menú, categorías y entradas (se puede repetir)
-│   ├── contenido/             páginas iniciales en bloques de WordPress (inicio, carta, nosotros, visitanos)
-│   └── tema/                  tema de bloques "Café Altura", sin PHP
-│       ├── theme.json         paleta, tipografías, tamaños, espacios, estilos de botones y CSS propio
-│       ├── templates/         front-page, home (Novedades), page, single, index, 404 (HTML de bloques)
-│       ├── parts/             header y footer
-│       ├── assets/            ilustraciones SVG (las tipografías se descargan al compilar)
-│       └── style.css          solo la cabecera que identifica el tema
+├── README.md                     este archivo
+├── informe.md                    informe de entrega
+├── wordpress/                    imagen propia (la compila .\desplegar.ps1 wordpress con el BuildKit del clúster)
+│   ├── Dockerfile                php:8.3-apache + gd/exif + WordPress 7.1.3 (verificado con sha1) + idioma es_CO + wp-cli + tipografías
+│   ├── raiz/                     se copia a la raíz del sitio (/var/www/html)
+│   │   ├── wp-config.php         todo desde variables de entorno; URL fija (no la decide el Host); sin instalar plugins desde el panel
+│   │   ├── .htaccess             HTTP → HTTPS, bloqueo de ?author=, enlaces permanentes
+│   │   └── favicon.ico           ícono de la taza
+│   ├── tema/                     tema de bloques "Café Altura", sin PHP
+│   │   ├── theme.json            paleta, tipografías, tamaños, espacios, estilos de botones y CSS propio
+│   │   ├── templates/            front-page, home (Novedades), page, single, index (archivos y búsqueda), 404
+│   │   ├── parts/                header y footer
+│   │   ├── assets/               ilustraciones SVG (las tipografías se descargan al compilar)
+│   │   └── style.css             solo la cabecera que identifica el tema
+│   ├── seguridad/
+│   │   ├── apache.conf           cabeceras, sin PHP en medios, sin XML-RPC, sin firma del servidor
+│   │   ├── php.ini               PHP de producción: sin errores en pantalla ni versión
+│   │   └── seguridad.php         mu-plugin: límite de intentos de login, errores genéricos, usuarios ocultos en la API
+│   └── instalacion/
+│       ├── configurar-sitio.sh   instala, activa el tema y crea páginas, menú, categorías y entradas (se puede repetir)
+│       └── contenido/            páginas iniciales en bloques de WordPress (inicio, carta, nosotros, visitanos)
 ├── kubernetes/
-│   ├── wordpress.yaml         namespace + MySQL (disco 5 GiB) + WordPress (disco de medios 5 GiB) + Services ClusterIP + permiso de lectura para IoT Platform
-│   └── secretos.ejemplo.yaml  plantilla del Secret, sin valores reales
-├── evidencias/                antes y después del reinicio, portada, móvil, carta, dashboard y reinicio.txt
-├── informe.md
-└── README.md
+│   ├── wordpress.yaml            namespace + MySQL (disco 5 GiB) + WordPress (disco de medios 5 GiB) + Services ClusterIP + permiso de lectura para IoT Platform
+│   └── secretos.ejemplo.yaml     plantilla del Secret (copiar a secretos.yaml, que git ignora)
+└── evidencias/
+    ├── 01-portada.png, 02-portada-movil.png, 03-carta.png
+    ├── 04-entrada-antes-del-reinicio.png, 05-entrada-despues-del-reinicio.png, reinicio.txt
+    └── 06-iot-platform-dashboard.png
 ```
 
-**¿Por qué no hay PHP propio?** WordPress está escrito en PHP y lo necesita para funcionar, pero un tema de bloques no: la estructura son plantillas HTML con bloques, el diseño está en `theme.json` y el resto lo resuelve el núcleo. Por eso todo lo visual se puede cambiar desde el panel.
+**¿Dónde hay PHP?** WordPress está escrito en PHP y lo necesita para funcionar, pero el tema no tiene PHP: la estructura son plantillas HTML con bloques y el diseño está en `theme.json`, así que todo lo visual se cambia desde el panel. El único PHP propio es la configuración (`wp-config.php`) y el plugin de seguridad, porque WordPress solo deja modificar el login y la API con código.
 
 ## Cómo lo ve IoT Platform
 

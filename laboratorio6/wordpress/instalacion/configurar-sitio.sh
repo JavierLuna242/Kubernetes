@@ -1,7 +1,7 @@
 #!/bin/sh
 # Deja el sitio listo: instala WordPress (si la base está vacía), activa el tema y crea el contenido inicial.
 # Se puede repetir sin problema. Uso:  kubectl exec -n wordpress deploy/wordpress -- configurar-sitio
-# El contenido de las páginas (bloques de WordPress) está en /usr/local/share/sitio (carpeta contenido/).
+# El contenido de las páginas (bloques de WordPress) está en /usr/local/share/sitio (carpeta instalacion/contenido/).
 set -e
 # wp-cli corre como www-data, igual que Apache: lo que suba a la biblioteca de medios queda con el dueño correcto.
 wp() { runuser -u www-data -- env WP_CLI_CACHE_DIR=/tmp/wp-cli wp --path=/var/www/html "$@"; }

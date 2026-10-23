@@ -99,6 +99,7 @@ metadata:
   namespace: wordpress
 spec:
   replicas: 1
+  revisionHistoryLimit: 2 # versiones anteriores que se guardan para un rollback
   strategy:
     type: Recreate # el disco de medios es ReadWriteOnce: el pod viejo debe soltarlo antes
   selector:

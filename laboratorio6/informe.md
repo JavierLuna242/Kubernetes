@@ -50,13 +50,13 @@ Detalle en el README.
 
 | Cambio | Reinicio | Resultado |
 |---|---|---|
-| Entrada "Chocolate caliente de temporada" (`/chocolate-caliente-de-temporada/`) y una imagen en la biblioteca de medios | `kubectl rollout restart deployment/wordpress`: pod `…-f74s5` → `…-hhwjj` | La entrada y la imagen siguen, las dos con HTTP 200 (capturas 01 y 02, `evidencias/reinicio.txt`) |
+| Entrada "Chocolate caliente de temporada" (`/chocolate-caliente-de-temporada/`) y una imagen en la biblioteca de medios | `kubectl rollout restart deployment/wordpress`: pod `…-692hp` → `…-zwrhp` | La entrada y la imagen siguen, las dos con HTTP 200 (capturas 04 y 05, `evidencias/reinicio.txt`) |
 
 Páginas, entradas, menú y estilos editados en el panel viven en MySQL, que tiene su propio disco. Las fotos subidas van a un segundo disco montado en `wp-content/uploads`. El resto del pod (núcleo, tema, tipografías) viene en la imagen, así que se puede reemplazar sin perder nada. Como el disco de medios es ReadWriteOnce, el Deployment usa la estrategia `Recreate`: el pod viejo suelta el disco antes de que arranque el nuevo, con unos segundos sin servicio en cada reinicio.
 
 ## 4. Qué se ve en IoT Platform
 
-El dashboard "WordPress en AKS" (captura 05) muestra:
+El dashboard "WordPress en AKS" (captura 06) muestra:
 
 - los pods listos;
 - los minutos desde el último reinicio de WordPress;
