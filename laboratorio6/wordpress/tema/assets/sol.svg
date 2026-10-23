@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Sol de la mañana">
+  <path d="M14 44a18 18 0 0 1 36 0z" fill="#FBF3D1" stroke="#3D3340" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M8 44h48M32 14v6M14 22l4 4M50 22l-4 4M6 36h4M54 36h4" fill="none" stroke="#3D3340" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

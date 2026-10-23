@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Porción de pastel">
+  <path d="M10 46 54 34v16H10z" fill="#FFFFFF" stroke="#3D3340" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M10 46 54 34 40 18z" fill="#F8D9E1" stroke="#3D3340" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M12 52h40" fill="none" stroke="#3D3340" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="40" cy="13" r="4" fill="#A0476A" stroke="none"/>
+</svg>

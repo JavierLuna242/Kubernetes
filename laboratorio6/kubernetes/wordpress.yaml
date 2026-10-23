@@ -1,4 +1,4 @@
-# Sitio WordPress de IoT Platform + su propio MySQL, en el namespace wordpress.
+# Sitio WordPress "Café Altura" + su propio MySQL, en el namespace wordpress.
 # Contraseñas y claves: Secret "wordpress" (ver secretos.ejemplo.yaml).
 # Público solo por Cloudflare Tunnel: https://wordpress.javier.life -> http://wordpress.wordpress.svc.cluster.local
 # (ruta del túnel "Kubernetes" del proyecto). Ningún Service tiene IP pública.
@@ -69,7 +69,20 @@ spec:
   ports:
     - port: 3306
 ---
-# Imagen propia (laboratorio6/wordpress). Las páginas y entradas viven en MySQL: el pod no necesita disco.
+# Biblioteca de medios (fotos que se suben desde el panel). Páginas, entradas y estilos viven en MySQL.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wordpress-medios
+  namespace: wordpress
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: managed-csi
+  resources:
+    requests:
+      storage: 5Gi
+---
+# Imagen propia (laboratorio6/wordpress): núcleo, tema y tipografías vienen en la imagen.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -77,6 +90,8 @@ metadata:
   namespace: wordpress
 spec:
   replicas: 1
+  strategy:
+    type: Recreate # el disco de medios es ReadWriteOnce: el pod viejo debe soltarlo antes
   selector:
     matchLabels:
       app: wordpress
@@ -85,6 +100,12 @@ spec:
       labels:
         app: wordpress
     spec:
+      securityContext:
+        fsGroup: 33 # www-data (Apache) puede escribir en el disco de medios
+      volumes:
+        - name: medios
+          persistentVolumeClaim:
+            claimName: wordpress-medios
       containers:
         - name: wordpress
           image: iotproyectojavierbr.azurecr.io/wordpress:latest
@@ -109,6 +130,9 @@ spec:
                 secretKeyRef: { name: wordpress, key: admin-password }
             - name: WP_URL
               value: https://wordpress.javier.life
+          volumeMounts:
+            - name: medios
+              mountPath: /var/www/html/wp-content/uploads
           readinessProbe:
             httpGet: { path: /, port: 80 }
           resources:

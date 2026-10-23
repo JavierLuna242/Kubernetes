@@ -1,20 +1,24 @@
-﻿== Cambio de prueba (2026-10-23T11:27:26) ==
-9
+== Cambios de prueba (2026-10-23T16:47:36-05:00) ==
+Entrada publicada (id 22): https://wordpress.javier.life/chocolate-caliente-de-temporada/
+Imagen subida a la biblioteca de medios: https://wordpress.javier.life/wp-content/uploads/2026/10/logo-cafe-altura.png
 
 == Antes del reinicio ==
-NAME                         READY   STATUS    RESTARTS   AGE     IP             NODE                                NOMINATED NODE   READINESS GATES
-wordpress-669c47fc59-mbwx9   1/1     Running   0          5m23s   10.244.0.94    aks-agentpool-11642444-vmss000001   <none>           <none>
-wordpress-db-0               1/1     Running   0          9m45s   10.244.0.224   aks-agentpool-11642444-vmss000001   <none>           <none>
+NAME                         READY   STATUS    RESTARTS   AGE     IP            NODE                                NOMINATED NODE   READINESS GATES
+wordpress-55b84f456b-f74s5   1/1     Running   0          29s     10.244.1.81   aks-agentpool-11642444-vmss000003   <none>           <none>
+wordpress-db-0               1/1     Running   0          4h53m   10.244.0.31   aks-agentpool-11642444-vmss000002   <none>           <none>
 
 == kubectl rollout restart deployment/wordpress ==
 deployment.apps/wordpress restarted
-Waiting for deployment "wordpress" rollout to finish: 1 old replicas are pending termination...
-Waiting for deployment "wordpress" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "wordpress" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "wordpress" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "wordpress" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "wordpress" rollout to finish: 0 of 1 updated replicas are available...
 deployment "wordpress" successfully rolled out
 
-== Después del reinicio (2026-10-23T11:28:00) ==
-NAME                         READY   STATUS    RESTARTS   AGE   IP             NODE                                NOMINATED NODE   READINESS GATES
-wordpress-6db9649d97-4f5zj   1/1     Running   0          23s   10.244.0.97    aks-agentpool-11642444-vmss000001   <none>           <none>
-wordpress-db-0               1/1     Running   0          10m   10.244.0.224   aks-agentpool-11642444-vmss000001   <none>           <none>
+== Después del reinicio (2026-10-23T16:47:52-05:00) ==
+NAME                        READY   STATUS    RESTARTS   AGE     IP            NODE                                NOMINATED NODE   READINESS GATES
+wordpress-c8577d9ff-hhwjj   1/1     Running   0          3s      10.244.1.91   aks-agentpool-11642444-vmss000003   <none>           <none>
+wordpress-db-0              1/1     Running   0          4h53m   10.244.0.31   aks-agentpool-11642444-vmss000002   <none>           <none>
 
-La entrada /este-sitio-corre-en-kubernetes/ sigue tras el reinicio: True
+Entrada tras el reinicio: HTTP 200 · contiene el título: sí
+Imagen tras el reinicio: HTTP 200 image/png
