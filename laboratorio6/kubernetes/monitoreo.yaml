@@ -1,0 +1,241 @@
+# Grafana + un Prometheus mínimo, en el namespace monitoreo. No usa las bases de los portales.
+# Prometheus lee cAdvisor de cada nodo a través del API server (CPU y memoria por pod).
+# ponytail: cAdvisor sigue publicando cgroups de pods ya borrados; el panel los descarta
+# exigiendo CPU > 0 en 2 min. Con kube-state-metrics se filtraría por estado real del pod.
+# Grafana es ClusterIP: se abre con  kubectl port-forward -n monitoreo svc/grafana 3000:80
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoreo
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoreo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-lab6
+rules:
+  - apiGroups: [""]
+    resources: [nodes, nodes/proxy, nodes/metrics]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-lab6
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-lab6
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: monitoreo
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus
+  namespace: monitoreo
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 30s
+    scrape_configs:
+      - job_name: cadvisor
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        authorization:
+          credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
+        metric_relabel_configs: # solo lo que usa el panel
+          - source_labels: [__name__]
+            regex: container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_network_(receive|transmit)_bytes_total
+            action: keep
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoreo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.5.0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.retention.time=3d
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data # ponytail: historial en emptyDir (se pierde al reiniciar); PVC si hiciera falta guardarlo
+              mountPath: /prometheus
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoreo
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana
+  namespace: monitoreo
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        url: http://prometheus:9090
+        isDefault: true
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: lab6
+        options:
+          path: /var/lib/grafana/dashboards
+  portales.json: |
+    {
+      "uid": "portales",
+      "title": "Portales en AKS: WordPress y PrestaShop",
+      "time": { "from": "now-1h", "to": "now" },
+      "refresh": "30s",
+      "panels": [
+        {
+          "type": "stat", "title": "Contenedores en ejecución por portal",
+          "gridPos": { "x": 0, "y": 0, "w": 8, "h": 7 },
+          "targets": [{ "refId": "A", "legendFormat": "{{namespace}}",
+            "expr": "count by (namespace) (rate(container_cpu_usage_seconds_total{namespace=~\"wordpress|prestashop\", container!=\"\"}[2m]) > 0)" }]
+        },
+        {
+          "type": "table", "title": "Pods de los dos portales",
+          "gridPos": { "x": 8, "y": 0, "w": 16, "h": 7 },
+          "fieldConfig": { "defaults": { "unit": "bytes" } },
+          "transformations": [{ "id": "organize", "options": { "excludeByName": { "Time": true },
+            "renameByName": { "namespace": "Portal", "pod": "Pod", "Value": "Memoria" } } }],
+          "targets": [{ "refId": "A", "format": "table", "instant": true,
+            "expr": "sum by (namespace, pod) (container_memory_working_set_bytes{namespace=~\"wordpress|prestashop\", container!=\"\"} and on (namespace, pod, container) rate(container_cpu_usage_seconds_total{namespace=~\"wordpress|prestashop\", container!=\"\"}[2m]) > 0)" }]
+        },
+        {
+          "type": "timeseries", "title": "CPU por pod (núcleos)",
+          "gridPos": { "x": 0, "y": 7, "w": 12, "h": 9 },
+          "targets": [{ "refId": "A", "legendFormat": "{{namespace}} / {{pod}}",
+            "expr": "sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace=~\"wordpress|prestashop\", container!=\"\"}[2m]))" }]
+        },
+        {
+          "type": "timeseries", "title": "Memoria por pod",
+          "gridPos": { "x": 12, "y": 7, "w": 12, "h": 9 },
+          "fieldConfig": { "defaults": { "unit": "bytes" } },
+          "targets": [{ "refId": "A", "legendFormat": "{{namespace}} / {{pod}}",
+            "expr": "sum by (namespace, pod) (container_memory_working_set_bytes{namespace=~\"wordpress|prestashop\", container!=\"\"} and on (namespace, pod, container) rate(container_cpu_usage_seconds_total{namespace=~\"wordpress|prestashop\", container!=\"\"}[2m]) > 0)" }]
+        },
+        {
+          "type": "timeseries", "title": "Tráfico de red recibido por portal",
+          "gridPos": { "x": 0, "y": 16, "w": 24, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "Bps" } },
+          "targets": [{ "refId": "A", "legendFormat": "{{namespace}} / {{pod}}",
+            "expr": "sum by (namespace, pod) (rate(container_network_receive_bytes_total{namespace=~\"wordpress|prestashop\"}[2m]))" }]
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoreo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.1.0
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: grafana, key: admin-password }
+            - name: GF_AUTH_ANONYMOUS_ENABLED # solo lectura; Grafana no sale del clúster
+              value: "true"
+            - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
+              value: /var/lib/grafana/dashboards/portales.json
+          volumeMounts:
+            - name: config
+              mountPath: /etc/grafana/provisioning/datasources/datasource.yaml
+              subPath: datasource.yaml
+            - name: config
+              mountPath: /etc/grafana/provisioning/dashboards/dashboards.yaml
+              subPath: dashboards.yaml
+            - name: config
+              mountPath: /var/lib/grafana/dashboards/portales.json
+              subPath: portales.json
+          readinessProbe:
+            httpGet: { path: /api/health, port: 3000 }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: config
+          configMap:
+            name: grafana
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoreo
+spec:
+  selector:
+    app: grafana
+  ports:
+    - port: 80
+      targetPort: 3000

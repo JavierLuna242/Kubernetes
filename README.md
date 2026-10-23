@@ -34,8 +34,9 @@ Proyecto final/
 │   ├── frontend.yaml
 │   ├── tunel-cloudflare.yaml      publica iot.javier.life con HTTPS (web + MQTT en /mqtt)
 │   └── compilador-imagenes.yaml   BuildKit (compila las imágenes; no hace falta Docker en el PC)
-└── dispositivos/
-    └── simulador.py           dispositivo de prueba: temperatura, humedad, presión, encendido 0/1, GPS; obedece comandos
+├── dispositivos/
+│   └── simulador.py           dispositivo de prueba: temperatura, humedad, presión, encendido 0/1, GPS; obedece comandos
+└── laboratorio6/              Laboratorio 6 (aparte de la plataforma): WordPress + PrestaShop + Grafana en este mismo AKS
 ```
 
 Cada test vive junto a su código: `servicios/backend/test_backend.py`, `servicios/analisis/test_analisis.py` y `servicios/frontend/src/lib/tests.check.ts`.

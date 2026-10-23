@@ -1,0 +1,158 @@
+# Portal 2: PrestaShop + su propio MariaDB, en el namespace prestashop.
+# Las contraseñas vienen del Secret prestashop-db (ver secretos.ejemplo.yaml).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: prestashop
+---
+# MariaDB solo para PrestaShop (distinto del MySQL de WordPress). Service ClusterIP.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: prestashop-db
+  namespace: prestashop
+spec:
+  serviceName: prestashop-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prestashop-db
+  template:
+    metadata:
+      labels:
+        app: prestashop-db
+    spec:
+      containers:
+        - name: mariadb
+          image: mariadb:10.11
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MARIADB_DATABASE
+              value: prestashop
+            - name: MARIADB_USER
+              value: prestashop
+            - name: MARIADB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: prestashop-db, key: password }
+            - name: MARIADB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: prestashop-db, key: root-password }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+              subPath: mysql # el disco de Azure trae lost+found en la raíz
+          readinessProbe:
+            tcpSocket: { port: 3306 }
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits: { memory: 768Mi }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: managed-csi
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prestashop-db
+  namespace: prestashop
+spec:
+  selector:
+    app: prestashop-db
+  ports:
+    - port: 3306
+---
+# A diferencia de WordPress, PrestaShop escribe su configuración (app/config/parameters.php)
+# en sus archivos: sin este disco, cada reinicio volvería a instalar la tienda.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prestashop-files
+  namespace: prestashop
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: managed-csi
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prestashop
+  namespace: prestashop
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # el disco es ReadWriteOnce: el pod viejo debe soltarlo antes
+  selector:
+    matchLabels:
+      app: prestashop
+  template:
+    metadata:
+      labels:
+        app: prestashop
+    spec:
+      containers:
+        - name: prestashop
+          image: prestashop/prestashop:8.2-apache
+          ports:
+            - containerPort: 80
+          env:
+            - name: DB_SERVER
+              value: prestashop-db
+            - name: DB_NAME
+              value: prestashop
+            - name: DB_USER
+              value: prestashop
+            - name: DB_PASSWD
+              valueFrom:
+                secretKeyRef: { name: prestashop-db, key: password }
+            - name: PS_INSTALL_AUTO # instala solo en el primer arranque (disco vacío)
+              value: "1"
+            - name: PS_DOMAIN # IP pública iot-ip + puerto del Service
+              value: 57.156.67.235:8081
+            - name: PS_LANGUAGE
+              value: es
+            - name: PS_COUNTRY
+              value: CO
+            - name: PS_FOLDER_ADMIN
+              value: admin-lab
+            - name: ADMIN_MAIL
+              value: admin@javier.life
+            - name: ADMIN_PASSWD
+              valueFrom:
+                secretKeyRef: { name: prestashop-db, key: admin-password }
+          volumeMounts:
+            - name: files
+              mountPath: /var/www/html
+          readinessProbe:
+            tcpSocket: { port: 80 }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1Gi }
+      volumes:
+        - name: files
+          persistentVolumeClaim:
+            claimName: prestashop-files
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prestashop
+  namespace: prestashop
+  annotations:
+    service.beta.kubernetes.io/azure-pip-name: iot-ip
+spec:
+  type: LoadBalancer
+  selector:
+    app: prestashop
+  ports:
+    - port: 8081
+      targetPort: 80
