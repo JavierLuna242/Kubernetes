@@ -43,7 +43,7 @@ if ! wp core is-installed; then
         --post_content="<!-- wp:paragraph --><p>Después de varios fines de semana como especial, el cheesecake de maracuyá se queda en la carta todos los días. Base de galleta de avena, poco azúcar y la fruta justa para que no empalague.</p><!-- /wp:paragraph -->"
     wp post create --post_status=publish --post_category=Eventos --post_date="2026-10-20 08:00:00" \
         --post_title="Taller de métodos de filtrado, los sábados" \
-        --post_content="<!-- wp:paragraph --><p>Cada sábado a las 10:00 abrimos la barra para enseñar a preparar café en V60, Chemex y prensa francesa. Son grupos de seis personas, dura una hora e incluye una bolsa de café. Escríbenos para apartar tu cupo.</p><!-- /wp:paragraph -->"
+        --post_content="<!-- wp:paragraph --><p>Cada sábado a las 10:00 abrimos la barra para enseñar a preparar café en V60, Chemex y prensa francesa. Son grupos de seis personas, dura una hora e incluye una bolsa de café. Aparta tu cupo en la barra.</p><!-- /wp:paragraph -->"
 fi
 
 wp theme activate cafe-altura
