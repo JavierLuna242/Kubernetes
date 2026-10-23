@@ -22,9 +22,10 @@
 ```
 laboratorio6/
 ├── wordpress/                 imagen propia (la compila desplegar.ps1 con el BuildKit del clúster)
-│   ├── Dockerfile             php:8.3-apache + gd/exif + WordPress 6.8.3 (verificado con sha1) + idioma es_CO + wp-cli + tipografías
-│   ├── wp-config.php          todo desde variables de entorno; HTTPS detrás de Cloudflare; sin instalar plugins desde el panel
-│   ├── .htaccess              enlaces permanentes
+│   ├── Dockerfile             php:8.3-apache + gd/exif + WordPress 7.1.3 (verificado con sha1) + idioma es_CO + wp-cli + tipografías
+│   ├── wp-config.php          todo desde variables de entorno; URL fija (no la decide el Host); sin instalar plugins desde el panel
+│   ├── .htaccess              HTTP → HTTPS, bloqueo de ?author=, enlaces permanentes
+│   ├── seguridad/             apache.conf (cabeceras, sin PHP en medios, sin XML-RPC), php.ini (producción) y mu-plugin seguridad.php
 │   ├── favicon.ico            ícono de la taza
 │   ├── configurar-sitio.sh    instala, activa el tema y crea páginas, menú, categorías y entradas (se puede repetir)
 │   ├── contenido/             páginas iniciales en bloques de WordPress (inicio, carta, nosotros, visitanos)
@@ -70,8 +71,10 @@ kubectl apply -f laboratorio6\kubernetes\secretos.yaml
 # 2. Compilar la imagen, subirla al ACR y desplegar (MySQL + WordPress)
 .\desplegar.ps1 wordpress
 
-# 3. Instalar el sitio
-kubectl exec -n wordpress deploy/wordpress -- configurar-sitio
+# 3. Instalar el sitio. La contraseña del panel entra por stdin: no queda guardada en el pod.
+#    (En un sitio ya instalado basta: kubectl exec -n wordpress deploy/wordpress -- configurar-sitio)
+$c = kubectl get secret -n wordpress wordpress -o jsonpath='{.data.admin-password}'
+[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($c)) | kubectl exec -i -n wordpress deploy/wordpress -- configurar-sitio
 
 # 4. Que IoT Platform lo vea (si el backend aún no tiene K8S_DEVICES)
 .\desplegar.ps1 backend
@@ -86,6 +89,34 @@ Para verlo sin el dominio: `kubectl port-forward -n wordpress svc/wordpress 8080
 - **Tema base o versión de WordPress:** se edita `laboratorio6/wordpress` y se ejecuta `.\desplegar.ps1 wordpress`. El panel no deja instalar plugins ni temas porque la imagen es inmutable.
 
 Cloudflare guarda en caché los archivos estáticos (SVG, tipografías). Si se cambia uno conservando el nombre, hay que cambiar el `?v=` de su URL o purgar la caché en Cloudflare.
+
+## Seguridad
+
+Revisión del 2026-10-23. Todo se aplica desde la imagen y el manifiesto, sin plugins de terceros.
+
+| Capa | Medida |
+|---|---|
+| WordPress | Versión 7.1.3 (estaba en 6.8.3, con 8 parches de seguridad pendientes). Al subir el ARG `WP_VERSION`, `configurar-sitio` actualiza la base |
+| Login | Máximo 5 fallos por IP cada 15 min; un único mensaje de error que no dice si el usuario existe; sin XML-RPC ni contraseñas de aplicación |
+| Usuarios ocultos | La API no lista usuarios sin sesión, `?author=N` responde 403 y el nombre público del autor es "Equipo Café Altura" (`/author/equipo/`), no el usuario `admin` |
+| HTTPS | Toda petición http se redirige a https; HSTS de un año |
+| Cabeceras | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` y una CSP que impide incrustar el sitio en otro |
+| Archivos | El código es de root y PHP solo puede leerlo; lo único escribible es la biblioteca de medios, donde PHP no se ejecuta |
+| Sin pistas | No hay `readme.html` ni versión en el HTML; PHP no muestra errores ni `X-Powered-By`; Apache sin firma |
+| Contenedores | WordPress: Apache con solo 4 capacidades (puerto 80 y cambio a www-data), sin escalar privilegios. MySQL: usuario 999, sin capacidades. Ninguno monta el token de Kubernetes. La contraseña del panel no está en el pod |
+| Red | WordPress y MySQL solo tienen Services ClusterIP; el sitio sale únicamente por Cloudflare |
+
+Para desbloquear una IP antes de los 15 minutos:
+
+```powershell
+kubectl exec -n wordpress deploy/wordpress -- sh -c "runuser -u www-data -- wp --path=/var/www/html transient delete --all"
+```
+
+**Pendiente, desde el panel de Cloudflare (no se puede hacer desde el clúster):**
+- **Proteger el panel:** poner `/wp-admin` y `/wp-login.php` detrás de Cloudflare Access (Zero Trust → Access → Applications, gratis hasta 50 usuarios). Así el panel pide un código por correo antes de mostrarse, y el límite por IP deja de ser la única barrera ante ataques repartidos entre muchas IP.
+- **Ajustes de la zona:** SSL/TLS → Edge Certificates → *Always Use HTTPS* y *Minimum TLS 1.2*; Security → *Bot Fight Mode*.
+
+**No aplicado:** las NetworkPolicy, porque el clúster tiene `networkPolicy: none` y Kubernetes no las haría cumplir. Activarlas cambia la red de todo el clúster, incluido IoT Platform.
 
 ## Prueba de persistencia
 

@@ -3,12 +3,19 @@
 # Se puede repetir sin problema. Uso:  kubectl exec -n wordpress deploy/wordpress -- configurar-sitio
 # El contenido de las páginas (bloques de WordPress) está en /usr/local/share/sitio (carpeta contenido/).
 set -e
-wp() { command wp --allow-root --path=/var/www/html "$@"; }
+# wp-cli corre como www-data, igual que Apache: lo que suba a la biblioteca de medios queda con el dueño correcto.
+wp() { runuser -u www-data -- env WP_CLI_CACHE_DIR=/tmp/wp-cli wp --path=/var/www/html "$@"; }
 C=/usr/local/share/sitio
 
 if ! wp core is-installed; then
+    # La contraseña del panel llega por stdin y no se guarda en el pod (ni en el entorno ni en un archivo):
+    #   kubectl get secret -n wordpress wordpress -o jsonpath='{.data.admin-password}' | base64 -d |
+    #     kubectl exec -i -n wordpress deploy/wordpress -- configurar-sitio
+    IFS= read -r clave || true
+    [ -n "$clave" ] || { echo "Falta la contraseña del panel por stdin (ver arriba)." >&2; exit 1; }
     wp core install --url="$WP_URL" --title="Café Altura" --admin_user=admin \
-        --admin_password="$WP_ADMIN_PASSWORD" --admin_email=admin@javier.life --skip-email
+        --admin_email=admin@javier.life --skip-email --admin_password="$clave"
+    unset clave
     wp option update WPLANG es_CO # el paquete de idioma viene en la imagen
     wp option update blogdescription "Café de origen y pastelería hecha en casa"
     wp option update timezone_string America/Bogota
@@ -45,6 +52,12 @@ if ! wp core is-installed; then
         --post_title="Taller de métodos de filtrado, los sábados" \
         --post_content="<!-- wp:paragraph --><p>Cada sábado a las 10:00 abrimos la barra para enseñar a preparar café en V60, Chemex y prensa francesa. Son grupos de seis personas, dura una hora e incluye una bolsa de café. Aparta tu cupo en la barra.</p><!-- /wp:paragraph -->"
 fi
+
+# Endurecimiento (también en sitios ya instalados): base al día tras subir de versión, sin pingbacks
+# y el nombre público del autor distinto del usuario de acceso (el usuario no aparece en enlaces ni en la API).
+wp core update-db
+wp option update default_ping_status closed
+wp user update admin --display_name="Equipo Café Altura" --nickname="Equipo Café Altura" --user_nicename=equipo
 
 wp theme activate cafe-altura
 wp rewrite structure '/%postname%/'

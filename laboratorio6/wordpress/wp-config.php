@@ -18,8 +18,10 @@ foreach (['AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'NONCE_KEY', 'AUTH_SAL
 if (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') {
     $_SERVER['HTTPS'] = 'on';
 }
-// La URL sale de la petición (dominio o port-forward); wp-cli no tiene petición y usa WP_URL.
-$url = isset($_SERVER['HTTP_HOST']) ? (empty($_SERVER['HTTPS']) ? 'http' : 'https') . '://' . $_SERVER['HTTP_HOST'] : getenv('WP_URL');
+// La URL es siempre WP_URL. Única excepción: kubectl port-forward a localhost, para probar sin el dominio.
+// (Tomar cualquier Host de la petición permitiría generar enlaces y correos hacia otro dominio.)
+$host = $_SERVER['HTTP_HOST'] ?? '';
+$url = preg_match('/^(localhost|127\.0\.0\.1)(:\d+)?$/', $host) ? "http://$host" : getenv('WP_URL');
 define('WP_HOME', $url);
 define('WP_SITEURL', $url);
 

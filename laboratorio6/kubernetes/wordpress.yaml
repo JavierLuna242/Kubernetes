@@ -23,9 +23,18 @@ spec:
       labels:
         app: wordpress-db
     spec:
+      automountServiceAccountToken: false # no habla con la API de Kubernetes
+      securityContext:
+        runAsUser: 999 # mysql: dueño de los datos del disco; sin root ni capacidades
+        runAsGroup: 999
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: mysql
           image: mysql:8.4
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
           ports:
             - containerPort: 3306
           env:
@@ -100,8 +109,10 @@ spec:
       labels:
         app: wordpress
     spec:
+      automountServiceAccountToken: false # no habla con la API de Kubernetes
       securityContext:
         fsGroup: 33 # www-data (Apache) puede escribir en el disco de medios
+        seccompProfile: { type: RuntimeDefault }
       volumes:
         - name: medios
           persistentVolumeClaim:
@@ -110,6 +121,12 @@ spec:
         - name: wordpress
           image: iotproyectojavierbr.azurecr.io/wordpress:latest
           imagePullPolicy: Always
+          # Apache arranca como root solo para abrir el puerto 80 y pasar a www-data: no necesita más capacidades.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [NET_BIND_SERVICE, SETUID, SETGID, KILL]
           ports:
             - containerPort: 80
           env:
@@ -125,14 +142,12 @@ spec:
             - name: WP_SALT
               valueFrom:
                 secretKeyRef: { name: wordpress, key: salt }
-            - name: WP_ADMIN_PASSWORD # solo la usa configurar-sitio en la instalación
-              valueFrom:
-                secretKeyRef: { name: wordpress, key: admin-password }
             - name: WP_URL
               value: https://wordpress.javier.life
           volumeMounts:
             - name: medios
               mountPath: /var/www/html/wp-content/uploads
+            # La contraseña del panel no está en el pod: configurar-sitio la recibe por stdin al instalar (ver README).
           readinessProbe:
             httpGet: { path: /, port: 80 }
           resources:

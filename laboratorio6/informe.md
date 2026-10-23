@@ -10,7 +10,7 @@ Se desplegó **Café Altura**, el sitio de una cafetería y pastelería de demos
 - **Sin Grafana.** La observación la hace IoT Platform, la propia plataforma del proyecto. Su backend lee el estado de los pods de Kubernetes y lo muestra como un dispositivo más.
 - **Sin template `azd`.** El clúster ya existía.
 
-El WordPress no usa la imagen `wordpress` de Docker Hub. Tiene una imagen propia: PHP 8.3 con Apache y las extensiones gd y exif para las fotos, el núcleo oficial de WordPress 6.8.3 verificado por suma sha1, el idioma español (Colombia) y wp-cli. La configuración (`wp-config.php`) toma todo de variables de entorno.
+El WordPress no usa la imagen `wordpress` de Docker Hub. Tiene una imagen propia: PHP 8.3 con Apache y las extensiones gd y exif para las fotos, el núcleo oficial de WordPress 7.1.3 verificado por suma sha1, el idioma español (Colombia) y wp-cli. La configuración (`wp-config.php`) toma todo de variables de entorno.
 
 El tema "Café Altura" es un **tema de bloques sin PHP propio**. WordPress sí necesita PHP para funcionar, pero el tema solo tiene `theme.json` (paleta pastel, tipografías Fraunces y DM Sans, tamaños y espacios), plantillas HTML de bloques e ilustraciones SVG. Así, todo lo visual se puede editar desde el panel, en Apariencia → Editor. Se comprobó en el editor que las 6 plantillas y partes y los 7 contenidos iniciales cargan sin bloques inválidos. La imagen no trae temas ni plugins de fábrica y no permite instalarlos desde el panel: el tema base y el núcleo cambian con una imagen nueva, y el contenido y los estilos, desde el panel.
 
@@ -35,6 +35,16 @@ El tema "Café Altura" es un **tema de bloques sin PHP propio**. WordPress sí n
 
 - **Exposición:** ningún Service del sitio es LoadBalancer. El sitio sale solo por el túnel de Cloudflare, con HTTPS, y no comparte la IP pública de la plataforma (57.156.67.235). La base de datos solo es accesible dentro del clúster.
 - **Credenciales:** contraseñas de MySQL, clave de sesiones y contraseña del panel en un Secret. El repositorio solo tiene `secretos.ejemplo.yaml`, con valores `CAMBIAR`.
+
+**Seguridad.** Una revisión encontró el núcleo desactualizado (6.8.3, con 8 parches pendientes), el sitio accesible por HTTP sin redirigir, el usuario `admin` visible en la API y en los mensajes del login, y el login sin límite de intentos. Se corrigió todo:
+- WordPress 7.1.3;
+- redirección a HTTPS con HSTS y cabeceras de seguridad;
+- un mu-plugin que limita los intentos por IP, unifica los mensajes de error y oculta los usuarios de la API;
+- XML-RPC bloqueado y sin ejecución de PHP en la biblioteca de medios;
+- código de solo lectura para PHP;
+- contenedores sin root (MySQL) o con el mínimo de capacidades (Apache), y sin el token de Kubernetes.
+
+Detalle en el README.
 
 ## 3. Persistencia
 

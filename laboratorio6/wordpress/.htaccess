@@ -1,6 +1,16 @@
-# Enlaces permanentes (/novedades/, /nombre-de-entrada/): todo lo que no es archivo va a index.php.
 RewriteEngine On
 RewriteBase /
+
+# Siempre HTTPS: Cloudflare avisa en X-Forwarded-Proto si el visitante llegó por http.
+# (Sin esa cabecera, como con kubectl port-forward, no se redirige.)
+RewriteCond %{HTTP:X-Forwarded-Proto} =http
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+# ?author=1 revelaría el nombre de usuario redirigiendo a /author/<usuario>/.
+RewriteCond %{QUERY_STRING} (^|&)author=\d [NC]
+RewriteRule ^ - [F]
+
+# Enlaces permanentes (/novedades/, /nombre-de-entrada/): todo lo que no es archivo va a index.php.
 RewriteRule ^index\.php$ - [L]
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
