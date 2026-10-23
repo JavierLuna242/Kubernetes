@@ -1,65 +1,84 @@
-# Laboratorio 6 — WordPress y PrestaShop en el mismo AKS, con Grafana
+# Laboratorio 6 — Sitio WordPress propio en el AKS de IoT Platform
 
-Dos portales independientes, cada uno con su base de datos, en el clúster AKS `Proyecto` (resource group `Javier`, región `chilecentral`, Kubernetes 1.36.4, 2 nodos Standard_DS2_v2). Grafana observa el clúster aparte. Informe: [informe.md](informe.md).
+Sitio público de IoT Platform hecho desde cero en WordPress: imagen y tema propios, con su propia base MySQL. Corre en el mismo clúster AKS que la plataforma (`Proyecto`, resource group `Javier`, `chilecentral`, Kubernetes 1.36.4). El visualizador de IoT Platform muestra el estado de sus pods como el dispositivo `aks-wordpress`. Informe: [informe.md](informe.md).
 
-| Namespace | Qué corre | Base de datos | Acceso |
-|---|---|---|---|
-| `wordpress` | `wordpress:6.8-apache` (Deployment) | `mysql:8.4` (StatefulSet + disco de 5 GiB, ClusterIP) | http://57.156.67.235:8080 |
-| `prestashop` | `prestashop/prestashop:8.2-apache` (Deployment + disco de 5 GiB para sus archivos) | `mariadb:10.11` (StatefulSet + disco de 5 GiB, ClusterIP) | http://57.156.67.235:8081 (admin en `/admin-lab`) |
-| `monitoreo` | Grafana 12.1 + Prometheus 3.5 | ninguna de los portales | `kubectl port-forward -n monitoreo svc/grafana 3000:80` → http://localhost:3000 |
+| Qué | Dónde |
+|---|---|
+| Sitio | **https://wordpress.javier.life** (Cloudflare Tunnel; no tiene IP pública propia ni comparte la de la plataforma) |
+| Panel de WordPress | https://wordpress.javier.life/wp-admin · usuario `admin` |
+| Monitoreo | IoT Platform → dashboard **WordPress en AKS** (dispositivo `aks-wordpress`) |
 
-Los dos portales comparten la IP pública del proyecto IoT (`iot-ip`) en puertos distintos, así que no se paga otra IP. Las bases de datos solo tienen Service ClusterIP: no salen a Internet.
-
-## Archivos
+## Carpetas
 
 ```
 laboratorio6/
+├── wordpress/                 imagen propia (la compila desplegar.ps1 con el BuildKit del clúster)
+│   ├── Dockerfile             php:8.3-apache + núcleo de WordPress 6.8.3 (verificado con sha1) + idioma es_CO + wp-cli
+│   ├── wp-config.php          todo desde variables de entorno; HTTPS detrás de Cloudflare; sin instalar plugins desde el panel
+│   ├── .htaccess              enlaces permanentes
+│   ├── configurar-sitio.sh    instala, activa el tema y crea el contenido inicial (se puede repetir)
+│   └── tema/                  tema "IoT Platform" escrito a mano: mismos colores y logo que el visualizador, modo oscuro
 ├── kubernetes/
-│   ├── wordpress.yaml          namespace + MySQL + WordPress + Services
-│   ├── prestashop.yaml         namespace + MariaDB + disco de archivos + PrestaShop + Services
-│   ├── monitoreo.yaml          namespace + Prometheus (lee cAdvisor) + Grafana con el panel "portales" ya cargado
-│   └── secretos.ejemplo.yaml   plantilla de los Secrets, sin valores reales
-├── evidencias/                 capturas de los dos sitios antes y después del reinicio, Grafana y reinicios.txt
-└── informe.md
+│   ├── wordpress.yaml         namespace + MySQL (StatefulSet, disco 5 GiB) + WordPress + Services ClusterIP + permiso de lectura para IoT Platform
+│   └── secretos.ejemplo.yaml  plantilla del Secret, sin valores reales
+├── evidencias/                capturas antes y después del reinicio, portada, móvil, dashboard y reinicio.txt
+├── informe.md
+└── README.md
 ```
+
+## Cómo lo ve IoT Platform
+
+El backend de la plataforma ([servicios/backend/main.py](../servicios/backend/main.py), `k8s_loop`) consulta cada 15 s la API de Kubernetes y metrics-server de los namespaces que indica `K8S_DEVICES` ([kubernetes/backend.yaml](../kubernetes/backend.yaml): `wordpress=aks-wordpress`). Guarda las lecturas igual que la telemetría MQTT. Métricas:
+
+| Métrica | Qué es |
+|---|---|
+| `pods_listos` | pods de WordPress y MySQL en estado Ready |
+| `wordpress_cpu`, `wordpress_db_cpu` | milinúcleos |
+| `wordpress_memoria`, `wordpress_db_memoria` | MiB |
+| `wordpress_edad`, `wordpress_db_edad` | minutos desde que arrancó el pod: vuelve a 0 en cada reinicio |
+
+El permiso es mínimo: el Role `lector-iot-platform` solo deja listar pods y su uso en el namespace `wordpress`, a la cuenta de servicio `iot/back`. Como son lecturas normales, también sirven para alertas por Telegram (por ejemplo, `pods_listos < 2`).
 
 ## Desplegar
 
-Requisitos: `az`, `kubectl` y acceso al clúster (`az aks get-credentials -g Javier -n Proyecto`). No hace falta Docker: todas las imágenes son públicas.
+Requisitos: `az`, `kubectl` y acceso al clúster (`az aks get-credentials -g Javier -n Proyecto`). No hace falta Docker.
 
 ```powershell
-cd laboratorio6/kubernetes
+# 1. Namespace y Secret (secretos.yaml está en .gitignore)
+kubectl create namespace wordpress
+copy laboratorio6\kubernetes\secretos.ejemplo.yaml laboratorio6\kubernetes\secretos.yaml   # y reemplazar cada CAMBIAR
+kubectl apply -f laboratorio6\kubernetes\secretos.yaml
 
-# 1. Namespaces y Secrets (secretos.yaml está en .gitignore; usar solo letras y números)
-kubectl create namespace wordpress; kubectl create namespace prestashop; kubectl create namespace monitoreo
-copy secretos.ejemplo.yaml secretos.yaml   # y reemplazar cada CAMBIAR
-kubectl apply -f secretos.yaml
+# 2. Compilar la imagen, subirla al ACR y desplegar (MySQL + WordPress)
+.\desplegar.ps1 wordpress
 
-# 2. Todo lo demás
-kubectl apply -f wordpress.yaml -f prestashop.yaml -f monitoreo.yaml
-kubectl get pods,pvc -n wordpress; kubectl get pods,pvc -n prestashop   # BD Running, volúmenes Bound
+# 3. Instalar el sitio
+kubectl exec -n wordpress deploy/wordpress -- configurar-sitio
+
+# 4. Que IoT Platform lo vea (si el backend aún no tiene K8S_DEVICES)
+.\desplegar.ps1 backend
 ```
 
-- **PrestaShop** se instala solo en el primer arranque (`PS_INSTALL_AUTO=1`, unos 3 minutos; `kubectl logs -n prestashop deploy/prestashop -f`). `PS_DOMAIN` lleva la IP y el puerto públicos: si cambia la IP hay que cambiarlo antes del primer arranque.
-- **WordPress**: completar el asistente en http://57.156.67.235:8080 (o con wp-cli dentro del pod, como se hizo aquí).
+5. **Publicarlo**: en Cloudflare, Zero Trust → Networks → Tunnels → túnel `Kubernetes` → Public hostnames → Add: `wordpress.javier.life` → `HTTP` → `wordpress.wordpress.svc.cluster.local:80`.
+
+Para verlo sin el dominio: `kubectl port-forward -n wordpress svc/wordpress 8080:80` → http://localhost:8080. La URL sale de cada petición, así que funciona igual.
+
+Para cambiar el tema o la versión de WordPress, se edita `laboratorio6/wordpress` y se vuelve a ejecutar `.\desplegar.ps1 wordpress`. El panel no permite instalar plugins ni temas porque la imagen es inmutable.
 
 ## Prueba de persistencia
 
 ```powershell
 kubectl rollout restart deployment/wordpress -n wordpress
-kubectl rollout restart deployment/prestashop -n prestashop
 ```
 
-La página http://57.156.67.235:8080/prueba-lab6/ y el producto http://57.156.67.235:8081/es/inicio/20-producto-prueba-lab6.html siguen tras el reinicio (ver `evidencias/reinicios.txt`).
-
-- WordPress guarda todo en MySQL, así que su pod no necesita disco.
-- PrestaShop escribe su configuración (`app/config/parameters.php`) en sus propios archivos. Por eso tiene el PVC `prestashop-files` y estrategia `Recreate`. Sin ese disco, cada reinicio volvería a instalar la tienda.
+Las páginas y entradas viven en MySQL, que tiene disco propio, así que siguen tras el reinicio (`evidencias/reinicio.txt`). En el dashboard, `wordpress_edad` vuelve a 0.
 
 ## Apagar
 
-El clúster es compartido con el proyecto final IoT, así que **no** se usa `azd down`. Para quitar solo el laboratorio (borra también sus 3 discos):
+El clúster es compartido con IoT Platform, así que no se apaga ni se usa `azd down`. Para quitar solo el sitio (borra también su disco):
 
 ```powershell
-kubectl delete namespace wordpress prestashop monitoreo
-kubectl delete clusterrole,clusterrolebinding prometheus-lab6
+kubectl delete namespace wordpress
 ```
+
+Además hay que borrar la ruta `wordpress.javier.life` en Cloudflare y el dispositivo `aks-wordpress` en IoT Platform (Dispositivos → eliminar). Si `K8S_DEVICES` sigue configurado, el backend solo avisa una vez en su log que el namespace no existe.

@@ -1,11 +1,12 @@
-# Portal 1: WordPress + su propio MySQL, en el namespace wordpress.
-# Las contraseñas vienen del Secret wordpress-db (ver secretos.ejemplo.yaml).
+# Sitio WordPress de IoT Platform + su propio MySQL, en el namespace wordpress.
+# Contraseñas y claves: Secret "wordpress" (ver secretos.ejemplo.yaml).
+# Público solo por Cloudflare Tunnel: https://wordpress.javier.life -> http://wordpress.wordpress.svc.cluster.local
+# (ruta del túnel "Kubernetes" del proyecto). Ningún Service tiene IP pública.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: wordpress
 ---
-# MySQL solo para WordPress. Service ClusterIP: no sale a Internet.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -34,10 +35,10 @@ spec:
               value: wordpress
             - name: MYSQL_PASSWORD
               valueFrom:
-                secretKeyRef: { name: wordpress-db, key: password }
+                secretKeyRef: { name: wordpress, key: db-password }
             - name: MYSQL_ROOT_PASSWORD
               valueFrom:
-                secretKeyRef: { name: wordpress-db, key: root-password }
+                secretKeyRef: { name: wordpress, key: db-root-password }
           volumeMounts:
             - name: data
               mountPath: /var/lib/mysql
@@ -68,7 +69,7 @@ spec:
   ports:
     - port: 3306
 ---
-# Las páginas viven en MySQL, así que el pod de WordPress puede reiniciarse sin disco propio.
+# Imagen propia (laboratorio6/wordpress). Las páginas y entradas viven en MySQL: el pod no necesita disco.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -86,37 +87,70 @@ spec:
     spec:
       containers:
         - name: wordpress
-          image: wordpress:6.8-apache
+          image: iotproyectojavierbr.azurecr.io/wordpress:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 80
           env:
-            - name: WORDPRESS_DB_HOST
+            - name: DB_HOST
               value: wordpress-db
-            - name: WORDPRESS_DB_NAME
+            - name: DB_NAME
               value: wordpress
-            - name: WORDPRESS_DB_USER
+            - name: DB_USER
               value: wordpress
-            - name: WORDPRESS_DB_PASSWORD
+            - name: DB_PASSWORD
               valueFrom:
-                secretKeyRef: { name: wordpress-db, key: password }
+                secretKeyRef: { name: wordpress, key: db-password }
+            - name: WP_SALT
+              valueFrom:
+                secretKeyRef: { name: wordpress, key: salt }
+            - name: WP_ADMIN_PASSWORD # solo la usa configurar-sitio en la instalación
+              valueFrom:
+                secretKeyRef: { name: wordpress, key: admin-password }
+            - name: WP_URL
+              value: https://wordpress.javier.life
           readinessProbe:
-            tcpSocket: { port: 80 }
+            httpGet: { path: /, port: 80 }
           resources:
             requests: { cpu: 50m, memory: 128Mi }
             limits: { memory: 512Mi }
 ---
-# Comparte la IP pública del proyecto (iot-ip) en otro puerto: no se paga una IP más.
 apiVersion: v1
 kind: Service
 metadata:
   name: wordpress
   namespace: wordpress
-  annotations:
-    service.beta.kubernetes.io/azure-pip-name: iot-ip
 spec:
-  type: LoadBalancer
   selector:
     app: wordpress
   ports:
-    - port: 8080
-      targetPort: 80
+    - port: 80
+---
+# El backend de IoT Platform (cuenta de servicio iot/back) lee estos pods y su uso de CPU y memoria
+# para mostrarlos en el visualizador como el dispositivo aks-wordpress (K8S_DEVICES en kubernetes/backend.yaml).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lector-iot-platform
+  namespace: wordpress
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lector-iot-platform
+  namespace: wordpress
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lector-iot-platform
+subjects:
+  - kind: ServiceAccount
+    name: back
+    namespace: iot

@@ -1,0 +1,20 @@
+﻿== Cambio de prueba (2026-10-23T11:27:26) ==
+9
+
+== Antes del reinicio ==
+NAME                         READY   STATUS    RESTARTS   AGE     IP             NODE                                NOMINATED NODE   READINESS GATES
+wordpress-669c47fc59-mbwx9   1/1     Running   0          5m23s   10.244.0.94    aks-agentpool-11642444-vmss000001   <none>           <none>
+wordpress-db-0               1/1     Running   0          9m45s   10.244.0.224   aks-agentpool-11642444-vmss000001   <none>           <none>
+
+== kubectl rollout restart deployment/wordpress ==
+deployment.apps/wordpress restarted
+Waiting for deployment "wordpress" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "wordpress" rollout to finish: 1 old replicas are pending termination...
+deployment "wordpress" successfully rolled out
+
+== Después del reinicio (2026-10-23T11:28:00) ==
+NAME                         READY   STATUS    RESTARTS   AGE   IP             NODE                                NOMINATED NODE   READINESS GATES
+wordpress-6db9649d97-4f5zj   1/1     Running   0          23s   10.244.0.97    aks-agentpool-11642444-vmss000001   <none>           <none>
+wordpress-db-0               1/1     Running   0          10m   10.244.0.224   aks-agentpool-11642444-vmss000001   <none>           <none>
+
+La entrada /este-sitio-corre-en-kubernetes/ sigue tras el reinicio: True

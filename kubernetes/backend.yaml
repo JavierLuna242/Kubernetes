@@ -1,4 +1,10 @@
 # Back (FastAPI). Solo dentro del clúster: el front le llega por el proxy de nginx en /api.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: back
+  namespace: iot
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,6 +20,7 @@ spec:
       labels:
         app: back
     spec:
+      serviceAccountName: back # lee pods de los namespaces de K8S_DEVICES (permiso en cada namespace)
       containers:
         - name: back
           image: iotproyectojavierbr.azurecr.io/back:latest
@@ -53,6 +60,8 @@ spec:
                 secretKeyRef:
                   name: iot-secrets
                   key: session-secret
+            - name: K8S_DEVICES # namespace=dispositivo: sus pods se ven como lecturas (Laboratorio 6)
+              value: wordpress=aks-wordpress
             - name: EMQX_API
               value: http://broker-ws:18083
             - name: EMQX_API_KEY # "clave:secreto" de la API del broker (estado de conexión de los dispositivos)

@@ -118,3 +118,37 @@ def test_gemelo_digital():
         "encendido": "sincronizado", "velocidad": "pendiente"}
     assert twin_diff({"encendido": 0}, {}) == {"encendido": "pendiente"}
     assert twin_diff({}, {"temperatura": 1}) == {}
+
+
+def test_k8s_unidades():
+    from main import cpu_m, mem_mib
+    assert cpu_m("12500000n") == 12.5 and cpu_m("250u") == 0.25 and cpu_m("15m") == 15 and cpu_m("1") == 1000
+    assert mem_mib("2048Ki") == 2 and mem_mib("100Mi") == 100 and mem_mib("1Gi") == 1024 and mem_mib(str(3 * 2**20)) == 3
+
+
+def test_k8s_pod_metrics_durante_un_reinicio():
+    from main import pod_metrics
+
+    def pod(name, app, start, ready=True, deleting=False):
+        meta = {"name": name, "labels": {"app": app} if app else {}}
+        if deleting:
+            meta["deletionTimestamp"] = start
+        return {"metadata": meta, "status": {"startTime": start, "conditions": [{"type": "Ready", "status": str(ready)}]}}
+
+    def use(name, cpu, mem):
+        return {"metadata": {"name": name}, "containers": [{"usage": {"cpu": cpu, "memory": mem}}]}
+
+    pods = [
+        pod("wp-viejo", "wordpress", "2026-10-23T10:00:00Z"),
+        pod("wp-nuevo", "wordpress", "2026-10-23T11:58:00Z"),
+        pod("wp-saliendo", "wordpress", "2026-10-23T09:00:00Z", deleting=True),  # no cuenta
+        pod("db-0", "wordpress-db", "2026-10-23T11:00:00Z"),
+        pod("db-arrancando", "wordpress-db", "2026-10-23T11:59:00Z", ready=False),  # no cuenta
+        pod("suelto", None, "2026-10-23T09:00:00Z"),  # sin etiqueta app: no cuenta
+    ]
+    usage = [use("wp-viejo", "10m", "100Mi"), use("wp-nuevo", "5m", "50Mi"), use("db-0", "3000000n", "400Mi")]
+    assert pod_metrics(pods, usage, datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)) == {
+        "pods_listos": 3,
+        "wordpress_cpu": 15, "wordpress_memoria": 150, "wordpress_edad": 2,
+        "wordpress_db_cpu": 3, "wordpress_db_memoria": 400, "wordpress_db_edad": 60,
+    }

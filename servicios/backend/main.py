@@ -4,6 +4,7 @@ Tópico:  iot/<dispositivo>/telemetry
 Payload: JSON con campos numéricos, ej. {"temperatura": 22.5, "humedad": 60}
          "ts" (ISO 8601) es opcional; si falta se usa la hora de llegada.
 Cada campo numérico se guarda como una fila (time, device, metric, value).
+También convierte en lecturas el estado de los pods de los namespaces de K8S_DEVICES (ver k8s_loop).
 
 Todo /api (salvo health/login/logout) exige la cookie de sesión que entrega /api/login.
 """
@@ -15,6 +16,7 @@ import json
 import os
 import re
 import secrets
+import ssl
 import time
 import urllib.parse
 import urllib.request
@@ -215,17 +217,91 @@ async def mqtt_loop(pool: asyncpg.Pool) -> None:
                         print(f"mensaje inválido en {msg.topic}: {e}", flush=True)
                         continue
                     if rows:
-                        await pool.executemany("INSERT INTO readings VALUES ($1, $2, $3, $4)", rows)
-                        # Gemelo digital: último valor reportado de cada métrica (solo dispositivos registrados).
-                        await pool.execute(
-                            "UPDATE devices SET reported = reported || $2, reported_at = greatest(reported_at, $3) WHERE id = $1",
-                            rows[0][1], {m: v for _, _, m, v in rows}, rows[0][0],
-                        )
-                        await broadcast(rows)
+                        await store(pool, rows)
         except aiomqtt.MqttError as e:
             mqtt_client = None
             print(f"MQTT desconectado ({e}), reintento en 5 s", flush=True)
             await asyncio.sleep(5)
+
+
+async def store(pool: asyncpg.Pool, rows: list[tuple]) -> None:
+    """Guarda las lecturas de un dispositivo, actualiza su gemelo y las envía en vivo al front."""
+    await pool.executemany("INSERT INTO readings VALUES ($1, $2, $3, $4)", rows)
+    # Gemelo digital: último valor reportado de cada métrica (solo dispositivos registrados).
+    await pool.execute(
+        "UPDATE devices SET reported = reported || $2, reported_at = greatest(reported_at, $3) WHERE id = $1",
+        rows[0][1], {m: v for _, _, m, v in rows}, rows[0][0],
+    )
+    await broadcast(rows)
+
+
+# ---------- Kubernetes -> lecturas ----------
+# K8S_DEVICES="wordpress=aks-wordpress" convierte los pods del namespace wordpress en el dispositivo aks-wordpress.
+# Por cada etiqueta app: <app>_cpu (milinúcleos), <app>_memoria (MiB) y <app>_edad (minutos desde que arrancó
+# su pod más nuevo: vuelve a 0 al reiniciarlo); además pods_listos. La cuenta de servicio "back" necesita
+# permiso para listar pods y pods.metrics.k8s.io en ese namespace (Role en laboratorio6/kubernetes/wordpress.yaml).
+
+K8S_SA = "/var/run/secrets/kubernetes.io/serviceaccount"
+
+
+def cpu_m(q: str) -> float:
+    """Cantidad de CPU de Kubernetes ("12345678n", "250u", "15m", "1") -> milinúcleos."""
+    for suf, div in (("n", 1e6), ("u", 1e3), ("m", 1)):
+        if q.endswith(suf):
+            return int(q[:-1]) / div
+    return float(q) * 1000
+
+
+def mem_mib(q: str) -> float:
+    """Cantidad de memoria ("123456Ki", "100Mi", "1Gi", bytes) -> MiB."""
+    for suf, mul in (("Ki", 1 / 1024), ("Mi", 1), ("Gi", 1024)):
+        if q.endswith(suf):
+            return int(q[:-2]) * mul
+    return int(q) / 2**20
+
+
+def pod_metrics(pods: list[dict], usage: list[dict], now: datetime) -> dict[str, float]:
+    """Resume los pods listos de un namespace (API core) y su uso (metrics.k8s.io) en métricas."""
+    usage = {m["metadata"]["name"]: m["containers"] for m in usage}
+    out: dict[str, float] = {"pods_listos": 0}
+    for p in pods:
+        app = p["metadata"].get("labels", {}).get("app")
+        ready = any(c["type"] == "Ready" and c["status"] == "True" for c in p["status"].get("conditions", []))
+        if not app or not ready or p["metadata"].get("deletionTimestamp"):
+            continue
+        app = app.replace("-", "_")
+        out["pods_listos"] += 1
+        for c in usage.get(p["metadata"]["name"], []):  # durante un reinicio hay dos pods: se suman
+            out[f"{app}_cpu"] = out.get(f"{app}_cpu", 0) + cpu_m(c["usage"]["cpu"])
+            out[f"{app}_memoria"] = out.get(f"{app}_memoria", 0) + mem_mib(c["usage"]["memory"])
+        age = (now - datetime.fromisoformat(p["status"]["startTime"])).total_seconds() / 60
+        out[f"{app}_edad"] = min(age, out.get(f"{app}_edad", age))
+    return {k: round(v, 2) for k, v in out.items()}
+
+
+def k8s_get(path: str) -> dict:
+    token = open(f"{K8S_SA}/token").read()  # Kubernetes lo renueva: se relee en cada consulta
+    req = urllib.request.Request("https://kubernetes.default.svc" + path, headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, context=ssl.create_default_context(cafile=f"{K8S_SA}/ca.crt"), timeout=10) as r:
+        return json.load(r)
+
+
+async def k8s_loop(pool: asyncpg.Pool) -> None:
+    targets = dict(t.split("=", 1) for t in os.getenv("K8S_DEVICES", "").split(",") if "=" in t)
+    last_error: dict[str, str] = {}
+    while targets:
+        for ns, device in targets.items():
+            try:
+                pods = await asyncio.to_thread(k8s_get, f"/api/v1/namespaces/{ns}/pods")
+                usage = await asyncio.to_thread(k8s_get, f"/apis/metrics.k8s.io/v1beta1/namespaces/{ns}/pods")
+                now = datetime.now(timezone.utc)
+                await store(pool, [(now, device, k, v) for k, v in pod_metrics(pods["items"], usage["items"], now).items()])
+                last_error.pop(ns, None)
+            except Exception as e:  # namespace borrado, sin permiso o metrics-server reiniciando: se reintenta
+                if last_error.get(ns) != str(e):  # se avisa una vez, no cada 15 s
+                    print(f"Kubernetes {ns}: {e}", flush=True)
+                last_error[ns] = str(e)
+        await asyncio.sleep(15)
 
 
 # ---------- Dispositivos: credenciales, gemelo digital y conexión ----------
@@ -555,7 +631,7 @@ async def lifespan(app: FastAPI):
     app.state.pool = await asyncpg.create_pool(os.environ["DATABASE_URL"], init=_init_conn)
     await app.state.pool.execute(SCHEMA)
     await setup_storage(app.state.pool)
-    tasks = [asyncio.create_task(f(app.state.pool)) for f in (mqtt_loop, alert_loop, report_loop, presence_loop)]
+    tasks = [asyncio.create_task(f(app.state.pool)) for f in (mqtt_loop, alert_loop, report_loop, presence_loop, k8s_loop)]
     yield
     for t in tasks:
         t.cancel()

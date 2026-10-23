@@ -1,10 +1,16 @@
 # Compila la imagen de un servicio dentro del clúster (BuildKit), la sube al registro (ACR) y la despliega.
-# Uso:  .\desplegar.ps1 backend   |   .\desplegar.ps1 frontend   |   .\desplegar.ps1 analisis
-param([Parameter(Mandatory)][ValidateSet('backend', 'frontend', 'analisis')][string]$Servicio)
+# Uso:  .\desplegar.ps1 backend | frontend | analisis      (plataforma IoT)
+#       .\desplegar.ps1 wordpress                          (Laboratorio 6)
+param([Parameter(Mandatory)][ValidateSet('backend', 'frontend', 'analisis', 'wordpress')][string]$Servicio)
 $acr = 'iotproyectojavierbr'
 $ver = 'v0.34.1'
-# Carpeta del proyecto -> nombre del Deployment y de la imagen en Kubernetes.
-$nombre = @{ backend = 'back'; frontend = 'front'; analisis = 'analysis' }[$Servicio]
+# Servicio -> carpeta del código, nombre del Deployment y de la imagen, namespace y manifiesto.
+$s = @{
+    backend   = @{ dir = 'servicios\backend';      nombre = 'back';      ns = 'iot';       yaml = 'kubernetes\backend.yaml' }
+    frontend  = @{ dir = 'servicios\frontend';     nombre = 'front';     ns = 'iot';       yaml = 'kubernetes\frontend.yaml' }
+    analisis  = @{ dir = 'servicios\analisis';     nombre = 'analysis';  ns = 'iot';       yaml = 'kubernetes\analisis.yaml' }
+    wordpress = @{ dir = 'laboratorio6\wordpress'; nombre = 'wordpress'; ns = 'wordpress'; yaml = 'laboratorio6\kubernetes\wordpress.yaml' }}[$Servicio]
+$nombre = $s.nombre
 
 # buildctl (cliente de BuildKit): se descarga una sola vez.
 $bin = "$env:LOCALAPPDATA\buildkit\bin\buildctl.exe"
@@ -28,12 +34,12 @@ kubectl apply -f "$PSScriptRoot\kubernetes\compilador-imagenes.yaml" | Out-Null
 kubectl -n iot rollout status deploy/buildkitd --timeout=180s | Out-Null
 $pod = kubectl -n iot get pod -l app=buildkitd --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}'
 
-$dir = Join-Path $PSScriptRoot "servicios\$Servicio"
+$dir = Join-Path $PSScriptRoot $s.dir
 & $bin --addr "kube-pod://$pod`?namespace=iot" build `
     --frontend dockerfile.v0 --local context=$dir --local dockerfile=$dir `
     --output "type=image,name=$acr.azurecr.io/${nombre}:latest,push=true"
 if ($LASTEXITCODE) { throw "Falló la compilación de $Servicio" }
 
-kubectl apply -f "$PSScriptRoot\kubernetes\$Servicio.yaml"
-kubectl -n iot rollout restart deploy/$nombre
-kubectl -n iot rollout status deploy/$nombre --timeout=300s
+kubectl apply -f (Join-Path $PSScriptRoot $s.yaml)
+kubectl -n $s.ns rollout restart deploy/$nombre
+kubectl -n $s.ns rollout status deploy/$nombre --timeout=300s

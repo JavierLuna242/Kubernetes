@@ -1,57 +1,59 @@
-# Informe — Laboratorio 6: multiplataforma en AKS
+# Informe — Laboratorio 6: WordPress en AKS
 
-**Autor:** Javier Luna · **Fecha:** 2026-10-23 · **Clúster:** AKS `Proyecto`, Kubernetes 1.36.4, región Chile Central, 2 nodos Standard_DS2_v2, plano de control en nivel Free.
+**Autor:** Javier Luna · **Fecha:** 2026-10-23 · **Clúster:** AKS `Proyecto`, Kubernetes 1.36.4, Chile Central, 2 nodos Standard_DS2_v2, plano de control en nivel Free.
 
-## 1. Arquitectura
+## 1. Qué se hizo y en qué se aparta del enunciado
 
-No se ejecutó `azd provision` con el template: se reutilizó el clúster AKS que ya hospeda el proyecto final IoT (el caso "clúster compartido" del laboratorio). Grafana es un Deployment propio con Prometheus, en lugar de Managed Grafana. Cada portal vive en su propio namespace y tiene su propia base de datos.
+Se desplegó el sitio público de IoT Platform, hecho en WordPress desde cero, en el mismo clúster AKS que ya hospeda la plataforma IoT (el caso "clúster compartido" del enunciado). Hay tres decisiones distintas a lo que pide la guía:
+
+- **Sin PrestaShop.** El proyecto solo necesita un portal: el sitio de la plataforma.
+- **Sin Grafana.** La observación la hace IoT Platform, la propia plataforma del proyecto. Su backend lee el estado de los pods de Kubernetes y lo muestra como un dispositivo más.
+- **Sin template `azd`.** El clúster ya existía.
+
+El WordPress no usa la imagen `wordpress` de Docker Hub. Tiene una imagen propia: PHP 8.3 con Apache, el núcleo oficial de WordPress 6.8.3 verificado por suma sha1, el idioma español (Colombia) y wp-cli. La configuración (`wp-config.php`) toma todo de variables de entorno, y el tema "IoT Platform" está escrito a mano con los colores y el logo del visualizador. La imagen no trae temas ni plugins de fábrica y no permite instalarlos desde el panel: cualquier cambio entra con una imagen nueva.
+
+## 2. Arquitectura
 
 ```
-                                 Internet
-                                    │  IP pública 57.156.67.235 (compartida)
-                     :8080 ─────────┼───────── :8081
-                       │                          │
- ┌─ AKS "Proyecto" ────┼──────────────────────────┼──────────────────────────────┐
- │ ns wordpress        ▼              ns prestashop ▼                            │
- │  Service LoadBalancer               Service LoadBalancer                      │
- │  Deployment wordpress               Deployment prestashop ── PVC 5 GiB        │
- │        │ (Secret wordpress-db)             │ (Secret prestashop-db)  (archivos)│
- │        ▼                                    ▼                                  │
- │  Service ClusterIP wordpress-db      Service ClusterIP prestashop-db           │
- │  StatefulSet MySQL 8.4 ── PVC 5 GiB   StatefulSet MariaDB 10.11 ── PVC 5 GiB   │
- │                                                                                │
- │ ns monitoreo:  Prometheus ──lee cAdvisor de cada nodo vía API server──┐       │
- │                Grafana (ClusterIP, port-forward) ◄── consulta ─────────┘       │
- │ ns iot: plataforma del proyecto final (no se toca)                             │
- └────────────────────────────────────────────────────────────────────────────────┘
+ Internet ──HTTPS──► Cloudflare ──túnel (cloudflared, sale desde el clúster)──┐
+                     wordpress.javier.life                                    │
+ ┌─ AKS "Proyecto" ───────────────────────────────────────────────────────────┼──┐
+ │ ns wordpress                                                               ▼  │
+ │   Service ClusterIP wordpress ──► Deployment wordpress (imagen propia, ACR)    │
+ │                                        │ Secret "wordpress"                    │
+ │                                        ▼                                       │
+ │   Service ClusterIP wordpress-db ─► StatefulSet MySQL 8.4 ── PVC 5 GiB         │
+ │                       ▲ Role lector-iot-platform (listar pods y su uso)       │
+ │ ns iot                │                                                        │
+ │   backend IoT Platform ── cada 15 s: API de Kubernetes + metrics-server        │
+ │        └─► TimescaleDB ─► visualizador: dashboard "WordPress en AKS"           │
+ └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Aislamiento:** WordPress solo conoce `wordpress-db` y PrestaShop solo `prestashop-db`. Cada uno usa un motor distinto (MySQL y MariaDB), con su propio Secret y su propio disco.
-- **Exposición:** solo los dos portales tienen Service LoadBalancer. Las bases de datos y Grafana son ClusterIP. Los portales reutilizan la IP pública del proyecto en otros puertos, así que no hubo que pagar otra IP.
-- **Credenciales:** en Secrets creados aparte. El repositorio solo trae `secretos.ejemplo.yaml`, con valores `CAMBIAR`.
+- **Exposición:** ningún Service del sitio es LoadBalancer. El sitio sale solo por el túnel de Cloudflare, con HTTPS, y no comparte la IP pública de la plataforma (57.156.67.235). La base de datos solo es accesible dentro del clúster.
+- **Credenciales:** contraseñas de MySQL, clave de sesiones y contraseña del panel en un Secret. El repositorio solo tiene `secretos.ejemplo.yaml`, con valores `CAMBIAR`.
 
-## 2. Persistencia
+## 3. Persistencia
 
-| Portal | Cambio de prueba | Reinicio | Resultado |
-|---|---|---|---|
-| WordPress | Página "Página de prueba Lab 6" (`/prueba-lab6/`) | `kubectl rollout restart`: pod `…-2p8lc` → `…-plvtr` | La página sigue (capturas 01 y 03) |
-| PrestaShop | Producto "Producto de prueba Lab 6", ref. LAB6-001, id 20 | `kubectl rollout restart`: pod `…-xbgqd` → `…-htjlj` | El producto sigue (capturas 02 y 04); el log muestra "PrestaShop Core already installed" |
+| Cambio | Reinicio | Resultado |
+|---|---|---|
+| Entrada "Este sitio corre en Kubernetes" (`/este-sitio-corre-en-kubernetes/`) | `kubectl rollout restart deployment/wordpress`: pod `…-mbwx9` → `…-4f5zj` | La entrada sigue (capturas 01 y 02, `evidencias/reinicio.txt`) |
 
-El detalle está en `evidencias/reinicios.txt`. Hubo una diferencia entre los dos portales. WordPress guarda las páginas en MySQL y su pod es desechable. PrestaShop, en cambio, escribe su configuración en sus propios archivos: sin el PVC en `/var/www/html`, el pod nuevo habría vuelto a instalar la tienda sobre la base existente.
+El pod de WordPress no tiene disco. Todo el contenido vive en MySQL, que sí lo tiene, por eso el pod se puede reemplazar sin perder nada. Hay un límite: los archivos subidos a la biblioteca de medios se guardan en el contenedor y se pierden al reiniciar. Si el sitio los necesita, hay que añadir un PVC en `wp-content/uploads`.
 
-## 3. Qué se ve en Grafana
+## 4. Qué se ve en IoT Platform
 
-El panel "Portales en AKS: WordPress y PrestaShop" (captura 05) se carga solo al desplegar e incluye:
+El dashboard "WordPress en AKS" (captura 05) muestra:
 
-- contenedores en ejecución por portal (2 y 2: la app y su base de datos);
-- una tabla con cada pod vivo, su portal y su memoria;
-- CPU, memoria y tráfico de red recibido por pod, con leyendas `namespace / pod`.
+- los pods listos;
+- los minutos desde el último reinicio de WordPress;
+- la memoria de cada pod;
+- CPU y memoria en el tiempo;
+- la edad de los pods.
 
-En las series se ve el reinicio: las líneas de los pods viejos se cortan y empiezan las de los nuevos. También se ve el pico de CPU y de red de PrestaShop durante su instalación automática.
+El reinicio de la prueba se ve claramente: la edad del pod de WordPress cae a 0 a las 11:27. Como son lecturas normales de la plataforma, también se les pueden poner alertas por Telegram, por ejemplo cuando `pods_listos` baje de 2.
 
-Durante la prueba apareció un detalle: cAdvisor sigue publicando durante varios minutos los cgroups de los pods ya borrados. El panel los descarta y solo cuenta contenedores con CPU mayor que cero en los últimos 2 minutos. Con kube-state-metrics se filtraría por el estado real del pod.
+## 5. Costo y decisión de apagado
 
-## 4. Costo y decisión de apagado
-
-- **Costo incremental del laboratorio:** 3 discos Standard SSD de 5 GiB (tarifa E2: US$0,84/mes cada uno), unos **US$2,5/mes**. La IP pública y el balanceador ya existían; el balanceador queda con 4 reglas, dentro de las 5 incluidas en su tarifa base. El plano de control está en nivel Free. Los dos nodos ya estaban pagados por el proyecto IoT: el laboratorio reserva 0,35 vCPU y 1,25 GiB (suma de sus *requests*) de su capacidad libre. Todo se carga a los créditos de Azure for Students.
-- **Decisión:** **no** se ejecuta `azd down` ni se detiene el clúster, porque también corre el proyecto final IoT. Los recursos del laboratorio quedan activos hasta la calificación y después se eliminan con `kubectl delete namespace wordpress prestashop monitoreo` y `kubectl delete clusterrole,clusterrolebinding prometheus-lab6`. Al borrar los namespaces se borran también sus discos, que tienen `reclaimPolicy: Delete`.
+- **Costo incremental:** un disco Standard SSD de 5 GiB (tarifa E2, US$0,84/mes). No hay IP pública ni regla de balanceador nueva, y el túnel de Cloudflare es gratuito. Los nodos ya los paga el proyecto IoT; el sitio reserva 0,1 vCPU y 512 MiB de su capacidad libre. Todo se carga a los créditos de Azure for Students.
+- **Decisión:** el clúster no se apaga ni se usa `azd down`, porque ahí corre IoT Platform. El sitio queda activo como parte del proyecto. Si hubiera que retirarlo, basta `kubectl delete namespace wordpress`, que borra también su disco, y quitar la ruta de Cloudflare.
