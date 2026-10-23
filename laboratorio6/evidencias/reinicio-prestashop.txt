@@ -1,0 +1,25 @@
+== Producto de prueba (2026-10-23T17:58:59-05:00) ==
+Granola de la casa 400 g · referencia LAB6-PRUEBA · https://prestashop.javier.life/40-granola-de-la-casa.html
+Antes: producto HTTP 200 (nombre presente: sí) · base: 1 fila(s) con referencia LAB6-PRUEBA
+
+== Antes del reinicio ==
+NAME                          READY   STATUS    RESTARTS   AGE   IP             NODE                                NOMINATED NODE   READINESS GATES
+prestashop-69849b8dff-2n7v4   1/1     Running   0          16m   10.244.1.176   aks-agentpool-11642444-vmss000003   <none>           <none>
+prestashop-db-0               1/1     Running   0          16m   10.244.1.86    aks-agentpool-11642444-vmss000003   <none>           <none>
+
+== kubectl rollout restart deployment/prestashop ==
+deployment.apps/prestashop restarted
+Waiting for deployment "prestashop" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "prestashop" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "prestashop" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "prestashop" rollout to finish: 0 of 1 updated replicas are available...
+deployment "prestashop" successfully rolled out
+
+== Después del reinicio (2026-10-23T17:59:15-05:00) ==
+NAME                         READY   STATUS    RESTARTS   AGE   IP             NODE                                NOMINATED NODE   READINESS GATES
+prestashop-c9dd957fd-jr257   1/1     Running   0          3s    10.244.1.218   aks-agentpool-11642444-vmss000003   <none>           <none>
+prestashop-db-0              1/1     Running   0          16m   10.244.1.86    aks-agentpool-11642444-vmss000003   <none>           <none>
+
+Arranque del pod nuevo (no reinstala):
+* PrestaShop Core already installed...
+Después: producto HTTP 200 (nombre presente: sí) · base: 1 fila(s) con referencia LAB6-PRUEBA

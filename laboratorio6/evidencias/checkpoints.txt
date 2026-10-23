@@ -1,0 +1,47 @@
+Checkpoints del Laboratorio 6 · 2026-10-23T18:00:23-05:00
+
+== Etapa 1: clúster (AKS Proyecto, 1.36.4 chilecentral ) ==
+NAME                                STATUS   ROLES    AGE    VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION             CONTAINER-RUNTIME
+aks-agentpool-11642444-vmss000002   Ready    <none>   103m   v1.36.4   10.224.0.4    <none>        Ubuntu 24.04.5 LTS   6.8.0-1070-azure (amd64)   containerd://2.3.6-1
+aks-agentpool-11642444-vmss000003   Ready    <none>   103m   v1.36.4   10.224.0.5    <none>        Ubuntu 24.04.5 LTS   6.8.0-1070-azure (amd64)   containerd://2.3.6-1
+
+== Etapa 2: bases de datos (una por portal) ==
+NAME             READY   STATUS    RESTARTS   AGE   IP             NODE                                NOMINATED NODE   READINESS GATES
+wordpress-db-0   1/1     Running   0          54m   10.244.1.195   aks-agentpool-11642444-vmss000003   <none>           <none>
+
+NAME              READY   STATUS    RESTARTS   AGE   IP            NODE                                NOMINATED NODE   READINESS GATES
+prestashop-db-0   1/1     Running   0          18m   10.244.1.86   aks-agentpool-11642444-vmss000003   <none>           <none>
+
+NAME                  STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+data-wordpress-db-0   Bound    pvc-1cf8bcb3-385e-4bb9-ad66-4ac675181fc7   5Gi        RWO            managed-csi    <unset>                 6h42m
+wordpress-medios      Bound    pvc-858dd1c1-f026-4091-93f8-b9dfa07c25f5   5Gi        RWO            managed-csi    <unset>                 84m
+
+NAME                   STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+data-prestashop-db-0   Bound    pvc-10140016-7a3b-48e6-9c67-0fb83632d327   5Gi        RWO            managed-csi    <unset>                 18m
+prestashop-archivos    Bound    pvc-a94575c3-2a35-410e-a2d5-a1e5b43081a5   5Gi        RWO            managed-csi    <unset>                 18m
+
+Services de base de datos (solo ClusterIP, sin IP pública):
+NAME           TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE
+wordpress-db   ClusterIP   10.0.212.215   <none>        3306/TCP   6h42m
+prestashop-db   ClusterIP   10.0.52.116   <none>   3306/TCP   18m
+
+== Etapa 3: portales ==
+NAME                             READY   STATUS    RESTARTS   AGE
+pod/wordpress-687bf46f58-zwrhp   1/1     Running   0          39m
+
+NAME                             READY   STATUS    RESTARTS   AGE
+pod/prestashop-c9dd957fd-jr257   1/1     Running   0          82s
+
+Services de los portales (ClusterIP: se publican solo por Cloudflare Tunnel):
+NAME        TYPE        CLUSTER-IP    EXTERNAL-IP   PORT(S)   AGE
+wordpress   ClusterIP   10.0.147.97   <none>        80/TCP    6h42m
+prestashop   ClusterIP   10.0.58.84   <none>   80/TCP   18m
+
+https://wordpress.javier.life/ -> HTTP 200 · Café Altura &#8211; Café de origen y pastelería hecha en casa
+https://prestashop.javier.life/ -> HTTP 200 · Café Altura · Tienda
+
+Cada portal usa su propia base (variables del Deployment):
+  WordPress  -> DB_HOST=wordpress-db (namespace wordpress, MySQL mysql:8.4)
+  PrestaShop -> DB_SERVER=prestashop-db (namespace prestashop, mariadb:11.8)
+
+== Etapa 4: reinicios en reinicio-wordpress.txt y reinicio-prestashop.txt; monitoreo en 10-iot-platform-dashboard.png ==

@@ -61,7 +61,7 @@ spec:
                   name: iot-secrets
                   key: session-secret
             - name: K8S_DEVICES # namespace=dispositivo: sus pods se ven como lecturas (Laboratorio 6)
-              value: wordpress=aks-wordpress
+              value: wordpress=aks-wordpress,prestashop=aks-prestashop
             - name: EMQX_API
               value: http://broker-ws:18083
             - name: EMQX_API_KEY # "clave:secreto" de la API del broker (estado de conexión de los dispositivos)

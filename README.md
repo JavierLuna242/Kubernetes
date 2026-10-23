@@ -36,7 +36,7 @@ Proyecto final/
 │   └── compilador-imagenes.yaml   BuildKit (compila las imágenes; no hace falta Docker en el PC)
 ├── dispositivos/
 │   └── simulador.py           dispositivo de prueba: temperatura, humedad, presión, encendido 0/1, GPS; obedece comandos
-└── laboratorio6/              Laboratorio 6: sitio WordPress propio (wordpress.javier.life); el backend muestra sus pods como el dispositivo aks-wordpress
+└── laboratorio6/              Laboratorio 6: WordPress (wordpress.javier.life) y PrestaShop (prestashop.javier.life); el backend muestra sus pods como los dispositivos aks-wordpress y aks-prestashop
 ```
 
 Cada test vive junto a su código: `servicios/backend/test_backend.py`, `servicios/analisis/test_analisis.py` y `servicios/frontend/src/lib/tests.check.ts`.

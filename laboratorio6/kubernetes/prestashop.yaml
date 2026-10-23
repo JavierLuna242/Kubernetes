@@ -1,0 +1,241 @@
+# Portal 2: "Café Altura · Tienda" en PrestaShop (imagen oficial) + su propio MariaDB, en el namespace prestashop.
+# Contraseñas y carpeta del panel: Secret "prestashop" (ver secretos.ejemplo.yaml).
+# Configuración inicial de la tienda: ConfigMap "prestashop-tienda", creado desde laboratorio6/prestashop (ver README).
+# Público solo por Cloudflare Tunnel: https://prestashop.javier.life -> http://prestashop.prestashop.svc.cluster.local
+# Ningún Service tiene IP pública.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: prestashop
+---
+# MariaDB solo para PrestaShop (WordPress usa su propio MySQL en otro namespace).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: prestashop-db
+  namespace: prestashop
+spec:
+  serviceName: prestashop-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prestashop-db
+  template:
+    metadata:
+      labels:
+        app: prestashop-db
+    spec:
+      automountServiceAccountToken: false # no habla con la API de Kubernetes
+      securityContext:
+        runAsUser: 999 # mysql de la imagen; sin root ni capacidades
+        runAsGroup: 999
+        runAsNonRoot: true
+        fsGroup: 999 # puede escribir en el disco nuevo
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: mariadb
+          image: mariadb:11.8
+          args: [--datadir=/var/lib/mysql/datos] # la raíz del disco de Azure trae lost+found
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MARIADB_DATABASE
+              value: prestashop
+            - name: MARIADB_USER
+              value: prestashop
+            - name: MARIADB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: prestashop, key: db-password }
+            - name: MARIADB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: prestashop, key: db-root-password }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+          readinessProbe:
+            tcpSocket: { port: 3306 }
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits: { memory: 768Mi }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: managed-csi
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prestashop-db
+  namespace: prestashop
+spec:
+  selector:
+    app: prestashop-db
+  ports:
+    - port: 3306
+---
+# PrestaShop guarda su configuración (app/config/parameters.php), módulos e imágenes en sus archivos:
+# sin este disco, cada reinicio volvería a instalar la tienda.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prestashop-archivos
+  namespace: prestashop
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: managed-csi
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prestashop
+  namespace: prestashop
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2 # versiones anteriores que se guardan para un rollback
+  strategy:
+    type: Recreate # el disco es ReadWriteOnce: el pod viejo debe soltarlo antes
+  selector:
+    matchLabels:
+      app: prestashop
+  template:
+    metadata:
+      labels:
+        app: prestashop
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - name: archivos
+          persistentVolumeClaim:
+            claimName: prestashop-archivos
+        - name: tienda # logo, fotos, estilos y tienda.php
+          configMap:
+            name: prestashop-tienda
+        - name: post-instalacion # la imagen ejecuta todo lo que haya aquí tras la primera instalación
+          configMap:
+            name: prestashop-tienda
+            defaultMode: 0755
+            items:
+              - { key: instalar-tienda.sh, path: instalar-tienda.sh }
+      # El disco de Azure trae lost+found (solo root) en la raíz, que es /var/www/html: el instalador de
+      # PrestaShop recorre esa carpeta, no puede abrirla y aborta. Está vacía, así que se quita antes de arrancar.
+      initContainers:
+        - name: quitar-lost-found
+          image: busybox:1.37
+          command: [sh, -c, "rmdir /archivos/lost+found 2>/dev/null; true"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - name: archivos
+              mountPath: /archivos
+      containers:
+        - name: prestashop
+          image: prestashop/prestashop:9.1.5-apache
+          # El arranque de la imagen corre como root (copia archivos, instala y pasa a www-data): solo esas capacidades.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, NET_BIND_SERVICE, KILL]
+          ports:
+            - containerPort: 80
+          env:
+            - name: DB_SERVER
+              value: prestashop-db
+            - name: DB_NAME
+              value: prestashop
+            - name: DB_USER
+              value: prestashop
+            - name: DB_PASSWD
+              valueFrom:
+                secretKeyRef: { name: prestashop, key: db-password }
+            - name: PS_INSTALL_AUTO # instala solo con el disco vacío; después, "PrestaShop Core already installed"
+              value: "1"
+            - name: PS_DOMAIN
+              value: prestashop.javier.life
+            - name: PS_ENABLE_SSL # Cloudflare pone el HTTPS; PrestaShop lo reconoce por X-Forwarded-Proto
+              value: "1"
+            - name: PS_LANGUAGE
+              value: es
+            - name: PS_COUNTRY
+              value: CO
+            # PrestaShop 9 renombra admin/ por su cuenta al instalar: si la imagen la renombra antes (PS_FOLDER_ADMIN),
+            # la instalación falla. instalar-tienda.sh la pasa después a CARPETA_PANEL (no adivinable, fuera del repo).
+            - name: PS_FOLDER_ADMIN
+              value: admin
+            - name: CARPETA_PANEL
+              valueFrom:
+                secretKeyRef: { name: prestashop, key: admin-folder }
+            - name: ADMIN_MAIL # usuario del panel (no se muestra en la tienda)
+              value: admin@javier.life
+            - name: ADMIN_PASSWD
+              valueFrom:
+                secretKeyRef: { name: prestashop, key: admin-password }
+          volumeMounts:
+            - name: archivos
+              mountPath: /var/www/html
+            - name: tienda
+              mountPath: /tmp/tienda
+              readOnly: true
+            - name: post-instalacion
+              mountPath: /tmp/post-install-scripts
+              readOnly: true
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prestashop
+  namespace: prestashop
+spec:
+  selector:
+    app: prestashop
+  ports:
+    - port: 80
+---
+# El backend de IoT Platform (cuenta de servicio iot/back) lee estos pods y su uso de CPU y memoria
+# para mostrarlos como el dispositivo aks-prestashop (K8S_DEVICES en kubernetes/backend.yaml).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lector-iot-platform
+  namespace: prestashop
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lector-iot-platform
+  namespace: prestashop
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lector-iot-platform
+subjects:
+  - kind: ServiceAccount
+    name: back
+    namespace: iot

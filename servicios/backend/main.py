@@ -236,10 +236,10 @@ async def store(pool: asyncpg.Pool, rows: list[tuple]) -> None:
 
 
 # ---------- Kubernetes -> lecturas ----------
-# K8S_DEVICES="wordpress=aks-wordpress" convierte los pods del namespace wordpress en el dispositivo aks-wordpress.
+# K8S_DEVICES="wordpress=aks-wordpress,prestashop=aks-prestashop" convierte los pods de cada namespace en un dispositivo.
 # Por cada etiqueta app: <app>_cpu (milinúcleos), <app>_memoria (MiB) y <app>_edad (minutos desde que arrancó
 # su pod más nuevo: vuelve a 0 al reiniciarlo); además pods_listos. La cuenta de servicio "back" necesita
-# permiso para listar pods y pods.metrics.k8s.io en ese namespace (Role en laboratorio6/kubernetes/wordpress.yaml).
+# permiso para listar pods y pods.metrics.k8s.io en cada namespace (Role en laboratorio6/kubernetes/*.yaml).
 
 K8S_SA = "/var/run/secrets/kubernetes.io/serviceaccount"
 

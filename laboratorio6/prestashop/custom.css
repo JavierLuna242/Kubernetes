@@ -1,0 +1,59 @@
+/* Café Altura · Tienda: paleta pastel y tipografías del sitio sobre hummingbird, el tema de PrestaShop 9.
+   PrestaShop carga assets/css/custom.css del tema activo después de sus estilos. Hummingbird usa Bootstrap 5:
+   casi todo se cambia con sus variables CSS. */
+@font-face { font-family: "DM Sans"; src: url(dm-sans.woff2) format("woff2"); font-weight: 100 1000; font-display: swap; }
+@font-face { font-family: Fraunces; src: url(fraunces.woff2) format("woff2"); font-weight: 100 900; font-display: swap; }
+
+:root, [data-bs-theme=light] {
+  --bs-body-bg: #FFFBF6;
+  --bs-body-color: #3D3340;
+  --bs-body-font-family: "DM Sans", system-ui, sans-serif;
+  --bs-heading-color: #3D3340;
+  --bs-primary: #A0476A;
+  --bs-primary-rgb: 160, 71, 106;
+  --bs-link-color: #3D3340;
+  --bs-link-color-rgb: 61, 51, 64;
+  --bs-link-hover-color: #A0476A;
+  --bs-link-hover-color-rgb: 160, 71, 106;
+  --bs-border-color: #EFE6E3;
+}
+
+body { font-family: "DM Sans", system-ui, sans-serif; background: #FFFBF6; color: #3D3340; }
+h1, h2, h3, h4, .h1, .h2, .h3, .h4, .section-title { font-family: Fraunces, Georgia, serif; font-weight: 500; letter-spacing: -0.01em; }
+
+/* Cabecera */
+.header, .header-top, .header-bottom { background: #FFFBF6; }
+.header-bottom { border-bottom: 1px solid #EFE6E3; }
+.header-bottom__logo .logo { height: 52px; width: auto; max-width: none; }
+.menu__link { font-weight: 500; }
+
+/* Botones redondeados en rosa; al pasar el mouse, cacao */
+.btn-primary {
+  --bs-btn-color: #3D3340; --bs-btn-bg: #F8D9E1; --bs-btn-border-color: #F8D9E1;
+  --bs-btn-hover-color: #FFFBF6; --bs-btn-hover-bg: #3D3340; --bs-btn-hover-border-color: #3D3340;
+  --bs-btn-active-color: #FFFBF6; --bs-btn-active-bg: #3D3340; --bs-btn-active-border-color: #3D3340;
+  --bs-btn-disabled-color: #3D3340; --bs-btn-disabled-bg: #F8D9E1; --bs-btn-disabled-border-color: #F8D9E1;
+  --bs-btn-focus-shadow-rgb: 160, 71, 106;
+  border-radius: 999px;
+}
+.btn-outline-primary {
+  --bs-btn-color: #3D3340; --bs-btn-border-color: #3D3340;
+  --bs-btn-hover-color: #FFFBF6; --bs-btn-hover-bg: #3D3340; --bs-btn-hover-border-color: #3D3340;
+  --bs-btn-active-color: #FFFBF6; --bs-btn-active-bg: #3D3340; --bs-btn-active-border-color: #3D3340;
+  border-radius: 999px;
+}
+
+/* Productos */
+.product-miniature__top, .product-miniature__top img, .product__images img { border-radius: 24px; }
+.product-miniature__title a { color: #3D3340; text-decoration: none; }
+.product-miniature__title a:hover { color: #A0476A; }
+.product-miniature__price, .product__current-price, .current-price { color: #A0476A; font-weight: 600; }
+.badge.new { background: #D3EEE2; color: #3D3340; font-weight: 600; }
+
+.wrapper { padding-top: 2.5rem; }
+
+/* Boletín y pie en pasteles, como el sitio (el boletín usa bg-body-tertiary: se cambia su variable) */
+.ps-emailsubscription { --bs-tertiary-bg-rgb: 230, 225, 247; --bs-bg-opacity: 1; }
+.footer, .footer__main { background: #FBF3D1; color: #3D3340; }
+.footer a, .footer-block__title, .footer p, .footer li { color: #3D3340; }
+.footer a:hover { color: #A0476A; }
