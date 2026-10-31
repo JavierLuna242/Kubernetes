@@ -62,6 +62,10 @@ spec:
                   key: session-secret
             - name: K8S_DEVICES # namespace=dispositivo: sus pods se ven como lecturas (Laboratorio 6)
               value: wordpress=aks-wordpress,prestashop=aks-prestashop
+            - name: AZURE_SUBSCRIPTION # coste del mes por Telegram (cost_loop)
+              value: 5a64ca6a-f2b7-410c-89d2-7e1464c2e7d0
+            - name: AZURE_CLIENT_ID # identidad de los nodos (Proyecto-agentpool), con rol Cost Management Reader
+              value: 7ceea717-0967-4e23-8689-acf4db690ae5
             - name: EMQX_API
               value: http://broker-ws:18083
             - name: EMQX_API_KEY # "clave:secreto" de la API del broker (estado de conexión de los dispositivos)

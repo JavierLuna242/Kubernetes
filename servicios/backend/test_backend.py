@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 os.environ.setdefault("SESSION_SECRET", "test")
 
-from main import check_token, condition, make_token, next_state, parse, pick_source, REPORT_TZ, TELEGRAM_MAX, build_report, report_due, DEVICE_ID, RESERVED_IDS, hash_token, new_token, token_ok, twin_diff  # noqa: E402
+from main import build_cost, check_token, condition, make_token, next_state, parse, pick_source, REPORT_TZ, TELEGRAM_MAX, build_report, report_due, DEVICE_ID, RESERVED_IDS, hash_token, new_token, token_ok, twin_diff  # noqa: E402
 import re  # noqa: E402
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -98,6 +98,18 @@ def test_reporte_cuando():
     assert not report_due(s, at(21, 6))  # aún no es la hora
     assert report_due(s, at(21, 7))
     assert not report_due({**s, "enabled": False}, at(21, 9))
+
+
+def test_aviso_de_coste():
+    now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+    costs = {"Virtual Machines": 50.95, "Storage": 9.66, "Load Balancer": 0.0}
+    text = build_cost(costs, None, now)
+    assert "octubre 2026" in text and "US$ 60,61" in text and "desde el último aviso" not in text
+    assert "a fin de mes: US$ 187,89" in text  # 60,61 / 10 días * 31
+    assert text.index("Virtual Machines") < text.index("Storage") and "Load Balancer" not in text
+    assert build_cost(costs, {"month": "2026-10", "total": 60.61}, now) is None  # no cambió
+    assert "(+1,61 desde el último aviso)" in build_cost(costs, {"month": "2026-10", "total": 59.0}, now)
+    assert "desde el último aviso" not in build_cost(costs, {"month": "2026-09", "total": 90.0}, now)  # mes nuevo
 
 
 def test_credenciales_dispositivo():

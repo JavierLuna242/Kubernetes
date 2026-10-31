@@ -591,6 +591,71 @@ async def report_loop(pool: asyncpg.Pool) -> None:
         await asyncio.sleep(60)
 
 
+# ---------- Coste de Azure -> Telegram y lecturas ----------
+# Cada hora consulta el coste del mes en curso (Cost Management) con la identidad de los nodos del AKS (IMDS):
+# lo guarda como lecturas del dispositivo "azure-costes" y, si cambió desde el último aviso, lo manda por Telegram.
+# Esa identidad (AZURE_CLIENT_ID) necesita el rol "Cost Management Reader" en la suscripción AZURE_SUBSCRIPTION.
+# Azure actualiza los costes unas pocas veces al día y con horas de retraso: no es en tiempo real.
+
+MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def azure_cost(sub: str, client_id: str) -> dict[str, float]:
+    """Coste del mes en curso por servicio de Azure (USD), p. ej. {"Virtual Machines": 50.95, ...} (bloqueante)."""
+    imds = ("http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01"
+            f"&resource=https://management.azure.com/&client_id={client_id}")
+    with urllib.request.urlopen(urllib.request.Request(imds, headers={"Metadata": "true"}), timeout=10) as r:
+        token = json.load(r)["access_token"]
+    query = {"type": "ActualCost", "timeframe": "MonthToDate", "dataset": {
+        "granularity": "None", "aggregation": {"cost": {"name": "Cost", "function": "Sum"}},
+        "grouping": [{"type": "Dimension", "name": "ServiceName"}]}}
+    req = urllib.request.Request(
+        f"https://management.azure.com/subscriptions/{sub}/providers/Microsoft.CostManagement/query?api-version=2023-11-01",
+        json.dumps(query).encode(), {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        props = json.load(r)["properties"]
+    cols = [c["name"] for c in props["columns"]]
+    rows = [dict(zip(cols, row)) for row in props["rows"]]
+    return {row["ServiceName"]: round(row["Cost"], 2) for row in rows}
+
+
+def build_cost(costs: dict[str, float], last: dict | None, now: datetime) -> str | None:
+    """Aviso de coste si el total del mes cambió respecto de last ({"month", "total"}); si no cambió, None."""
+    month, total = f"{now:%Y-%m}", round(sum(costs.values()), 2)
+    if last and last["month"] == month and last["total"] == total:
+        return None
+    change = f" ({'+' if total >= last['total'] else ''}{num(total - last['total'])} desde el último aviso)" \
+        if last and last["month"] == month else ""
+    days = ((now.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)).day
+    lines = [f"💰 Coste de Azure · {MONTHS[now.month - 1]} {now.year}", "",
+             f"Total del mes: US$ {num(total)}{change}",
+             f"Si sigue así, a fin de mes: US$ {num(total / now.day * days)}", ""]
+    lines += [f"  • {name}: {num(c)}" for name, c in sorted(costs.items(), key=lambda kv: -kv[1]) if c >= 0.01]
+    return "\n".join(lines)
+
+
+async def cost_loop(pool: asyncpg.Pool) -> None:
+    sub, client_id = os.getenv("AZURE_SUBSCRIPTION"), os.getenv("AZURE_CLIENT_ID")
+    while sub and client_id:
+        try:
+            costs = await asyncio.to_thread(azure_cost, sub, client_id)
+            now = datetime.now(timezone.utc)
+            await store(pool, [(now, "azure-costes", "total", round(sum(costs.values()), 2))]
+                        + [(now, "azure-costes", re.sub(r"\W+", "_", k.lower()), v) for k, v in costs.items()])
+            last = await pool.fetchval("SELECT value FROM settings WHERE key = 'cost'")
+            text = build_cost(costs, last, now)
+            if text:
+                await send(text)
+                await pool.execute(
+                    "INSERT INTO settings (key, value) VALUES ('cost', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+                    {"month": f"{now:%Y-%m}", "total": round(sum(costs.values()), 2)},
+                )
+        except Exception as e:  # sin permiso todavía, Azure limitando consultas (429) o sin red: se reintenta
+            print(f"error consultando el coste de Azure: {e}", flush=True)
+        await asyncio.sleep(3600)
+
+
 # ---------- Sesión (cookie firmada con HMAC) ----------
 
 def _sig(payload: str) -> str:
@@ -631,7 +696,7 @@ async def lifespan(app: FastAPI):
     app.state.pool = await asyncpg.create_pool(os.environ["DATABASE_URL"], init=_init_conn)
     await app.state.pool.execute(SCHEMA)
     await setup_storage(app.state.pool)
-    tasks = [asyncio.create_task(f(app.state.pool)) for f in (mqtt_loop, alert_loop, report_loop, presence_loop, k8s_loop)]
+    tasks = [asyncio.create_task(f(app.state.pool)) for f in (mqtt_loop, alert_loop, report_loop, presence_loop, k8s_loop, cost_loop)]
     yield
     for t in tasks:
         t.cancel()
