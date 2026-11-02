@@ -54,11 +54,10 @@ laboratorio/
 │   ├── instalacion/              instalar-tienda.sh (post-instalación) y tienda.php (identidad, moneda, catálogo, portada, menú, textos)
 │   ├── tema/                     custom.css sobre el tema hummingbird, logo.png y favicon.ico
 │   └── fotos/                    dos fotos por producto y la de portada (Wikimedia Commons)
-├── kubernetes/
-│   ├── wordpress.yaml            MySQL + WordPress, discos de 5 GiB, Services ClusterIP y permiso de lectura para IoT Platform
-│   ├── prestashop.yaml           MariaDB + PrestaShop, discos de 5 GiB, Services ClusterIP y permiso de lectura para IoT Platform
-│   └── secretos.ejemplo.yaml     plantilla de los dos Secrets
-└── evidencias/                   capturas, checkpoints y registros de las pruebas de reinicio (ver la última sección)
+└── kubernetes/
+    ├── wordpress.yaml            MySQL + WordPress, discos de 5 GiB, Services ClusterIP y permiso de lectura para IoT Platform
+    ├── prestashop.yaml           MariaDB + PrestaShop, discos de 5 GiB, Services ClusterIP y permiso de lectura para IoT Platform
+    └── secretos.ejemplo.yaml     plantilla de los dos Secrets
 ```
 
 ## Despliegue
@@ -117,7 +116,7 @@ Para ver WordPress sin el dominio: `kubectl port-forward -n wordpress svc/wordpr
 - **Disco de archivos:** PrestaShop guarda su configuración, módulos e imágenes en `/var/www/html`, así que ese directorio va en un disco propio. Sin él, cada reinicio reinstalaría la tienda.
 
 <p align="center">
-  <img src="evidencias/11-prestashop-ficha-tecnica.png" alt="Ficha del Café de Huila con sus dos fotos y la ficha técnica" width="720">
+  <img src="img/prestashop-ficha-tecnica.png" alt="Ficha del Café de Huila con sus dos fotos y la ficha técnica" width="720">
   <br><em>Ficha de producto: foto con la etiqueta del origen, foto del lugar real y ficha técnica.</em>
 </p>
 
@@ -167,14 +166,11 @@ Cada portal se reinició con `kubectl rollout restart`, y su cambio de prueba si
 ![Entrada de WordPress antes y después del reinicio](img/reinicio-wordpress.jpg)
 
 ![Producto de PrestaShop antes y después del reinicio](img/reinicio-prestashop.jpg)
-
-El registro completo de cada prueba está en `evidencias/reinicio-wordpress.txt` y `evidencias/reinicio-prestashop.txt`.
-
 ## Monitoreo en IoT Platform
 
 El backend de IoT Platform ([servicios/backend/main.py](../servicios/backend/main.py), función `k8s_loop`) consulta cada 15 s la API de Kubernetes y metrics-server en los namespaces de `K8S_DEVICES` ([kubernetes/backend.yaml](../kubernetes/backend.yaml)). Guarda las lecturas igual que la telemetría MQTT de los dispositivos: una serie por etiqueta `app` de cada pod.
 
-![Dashboard Portales en AKS en IoT Platform](evidencias/10-iot-platform-dashboard.png)
+![Dashboard Portales en AKS en IoT Platform](img/iot-platform-dashboard.png)
 
 | Métrica (`aks-wordpress` / `aks-prestashop`) | Significado |
 |---|---|
