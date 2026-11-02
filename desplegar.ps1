@@ -1,6 +1,6 @@
 # Compila la imagen de un servicio dentro del clúster (BuildKit), la sube al registro (ACR) y la despliega.
 # Uso:  .\desplegar.ps1 backend | frontend | analisis      (plataforma IoT)
-#       .\desplegar.ps1 wordpress                          (Laboratorio 6)
+#       .\desplegar.ps1 wordpress                          (Laboratorio)
 param([Parameter(Mandatory)][ValidateSet('backend', 'frontend', 'analisis', 'wordpress')][string]$Servicio)
 $acr = 'iotproyectojavierbr'
 $ver = 'v0.34.1'
@@ -9,7 +9,7 @@ $s = @{
     backend   = @{ dir = 'servicios\backend';      nombre = 'back';      ns = 'iot';       yaml = 'kubernetes\backend.yaml' }
     frontend  = @{ dir = 'servicios\frontend';     nombre = 'front';     ns = 'iot';       yaml = 'kubernetes\frontend.yaml' }
     analisis  = @{ dir = 'servicios\analisis';     nombre = 'analysis';  ns = 'iot';       yaml = 'kubernetes\analisis.yaml' }
-    wordpress = @{ dir = 'laboratorio6\wordpress'; nombre = 'wordpress'; ns = 'wordpress'; yaml = 'laboratorio6\kubernetes\wordpress.yaml' }}[$Servicio]
+    wordpress = @{ dir = 'laboratorio\wordpress'; nombre = 'wordpress'; ns = 'wordpress'; yaml = 'laboratorio\kubernetes\wordpress.yaml' }}[$Servicio]
 $nombre = $s.nombre
 
 # buildctl (cliente de BuildKit): se descarga una sola vez.

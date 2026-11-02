@@ -60,7 +60,7 @@ spec:
                 secretKeyRef:
                   name: iot-secrets
                   key: session-secret
-            - name: K8S_DEVICES # namespace=dispositivo: sus pods se ven como lecturas (Laboratorio 6)
+            - name: K8S_DEVICES # namespace=dispositivo: sus pods se ven como lecturas (Laboratorio)
               value: wordpress=aks-wordpress,prestashop=aks-prestashop
             - name: AZURE_SUBSCRIPTION # coste del mes por Telegram (cost_loop)
               value: 5a64ca6a-f2b7-410c-89d2-7e1464c2e7d0

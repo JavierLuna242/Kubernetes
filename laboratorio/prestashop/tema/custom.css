@@ -48,9 +48,49 @@ h1, h2, h3, h4, .h1, .h2, .h3, .h4, .section-title { font-family: Fraunces, Geor
 .product-miniature__title a { color: #3D3340; text-decoration: none; }
 .product-miniature__title a:hover { color: #A0476A; }
 .product-miniature__price, .product__current-price, .current-price { color: #A0476A; font-weight: 600; }
-.badge.new { background: #D3EEE2; color: #3D3340; font-weight: 600; }
+.badge.new { display: none; } /* todo el catálogo es nuevo: la etiqueta no dice nada */
 
 .wrapper { padding-top: 2.5rem; }
+
+/* Ruta de navegación: crema, no el gris azulado de Bootstrap */
+.breadcrumb__wrapper { background: #FFFBF6; border-bottom: 1px solid #EFE6E3; }
+
+/* Portada: foto del cafetal con la invitación encima (texto en ps_customtext, ver tienda.php) */
+.ps-customtext { margin-bottom: 3rem; }
+.ca-hero {
+  position: relative; display: flex; align-items: center; min-height: 420px; padding: 3rem;
+  border-radius: 24px; overflow: hidden; background-size: cover; background-position: center;
+}
+.ca-hero::before { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(61, 51, 64, .78), rgba(61, 51, 64, .15)); }
+.ca-hero__texto { position: relative; max-width: 34rem; color: #FFFBF6; }
+.ca-hero__texto h2 { color: #FFFBF6; font-size: clamp(2rem, 4vw, 3rem); line-height: 1.1; margin-bottom: 1rem; }
+.ca-hero__texto p { font-size: 1.1rem; margin-bottom: 1.5rem; }
+.ca-hero__antetitulo { display: inline-block; padding: .25rem .9rem; border-radius: 999px; background: #F8D9E1; color: #3D3340; font-size: .9rem !important; font-weight: 600; }
+.ca-hero .btn { margin: 0 .5rem .5rem 0; }
+.ca-hero__secundario { color: #FFFBF6; border: 1px solid #FFFBF6; border-radius: 999px; }
+.ca-hero__secundario:hover { background: #FFFBF6; color: #3D3340; }
+.ca-hero__credito { position: absolute; right: 1rem; bottom: .6rem; color: rgba(255, 251, 246, .75); font-size: .7rem; }
+
+/* Franja de confianza bajo la portada, con los pasteles del sitio */
+.ca-confianza { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin: 1.5rem 0 0; padding: 0; list-style: none; }
+.ca-confianza li { padding: 1.1rem 1.25rem; border-radius: 20px; background: #D3EEE2; }
+.ca-confianza li:nth-child(2) { background: #E6E1F7; }
+.ca-confianza li:nth-child(3) { background: #FDE4D3; }
+.ca-confianza li:nth-child(4) { background: #F8D9E1; }
+.ca-confianza strong, .ca-confianza span { display: block; }
+.ca-confianza span { font-size: .9rem; }
+@media (max-width: 767px) {
+  .header-bottom__logo .logo { height: 36px; } /* a 52 px no caben el menú, el logo y los tres íconos */
+  .ca-hero { min-height: 360px; padding: 1.75rem; }
+  .ca-hero::before { background: rgba(61, 51, 64, .62); }
+  .ca-confianza { grid-template-columns: 1fr 1fr; }
+}
+
+/* Ficha técnica del producto: filas alternas en vainilla */
+.details__item--feature { padding: .5rem .75rem; border-radius: 10px; }
+.details__item--feature:nth-child(odd) { background: #FBF3D1; }
+.details__list { background: transparent; } /* el tema la pinta con el gris azulado de Bootstrap */
+.details__item--feature .details__title { font-weight: 600; }
 
 /* Boletín y pie en pasteles, como el sitio (el boletín usa bg-body-tertiary: se cambia su variable) */
 .ps-emailsubscription { --bs-tertiary-bg-rgb: 230, 225, 247; --bs-bg-opacity: 1; }

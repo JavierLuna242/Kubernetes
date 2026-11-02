@@ -1,6 +1,7 @@
 # Portal 2: "Café Altura · Tienda" en PrestaShop (imagen oficial) + su propio MariaDB, en el namespace prestashop.
 # Contraseñas y carpeta del panel: Secret "prestashop" (ver secretos.ejemplo.yaml).
-# Configuración inicial de la tienda: ConfigMap "prestashop-tienda", creado desde laboratorio6/prestashop (ver README).
+# Configuración inicial de la tienda: ConfigMaps "prestashop-tienda" (laboratorio/prestashop/instalacion y tema)
+# y "prestashop-fotos" (laboratorio/prestashop/fotos). Ver README.
 # Público solo por Cloudflare Tunnel: https://prestashop.javier.life -> http://prestashop.prestashop.svc.cluster.local
 # Ningún Service tiene IP pública.
 apiVersion: v1
@@ -120,9 +121,12 @@ spec:
         - name: archivos
           persistentVolumeClaim:
             claimName: prestashop-archivos
-        - name: tienda # logo, fotos, estilos y tienda.php
+        - name: tienda # instalacion/ y tema/: scripts, estilos, logo y favicon
           configMap:
             name: prestashop-tienda
+        - name: fotos # fotos de producto y de portada (aparte: un ConfigMap admite 1 MiB)
+          configMap:
+            name: prestashop-fotos
         - name: post-instalacion # la imagen ejecuta todo lo que haya aquí tras la primera instalación
           configMap:
             name: prestashop-tienda
@@ -189,6 +193,9 @@ spec:
               mountPath: /var/www/html
             - name: tienda
               mountPath: /tmp/tienda
+              readOnly: true
+            - name: fotos
+              mountPath: /tmp/fotos
               readOnly: true
             - name: post-instalacion
               mountPath: /tmp/post-install-scripts

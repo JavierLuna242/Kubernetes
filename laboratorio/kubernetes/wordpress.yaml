@@ -91,7 +91,7 @@ spec:
     requests:
       storage: 5Gi
 ---
-# Imagen propia (laboratorio6/wordpress): núcleo, tema y tipografías vienen en la imagen.
+# Imagen propia (laboratorio/wordpress): núcleo, tema y tipografías vienen en la imagen.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
